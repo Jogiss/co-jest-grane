@@ -148,6 +148,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         anonUidRef.current = uid;
       } catch { anonUidRef.current = 'uid_anon_' + Math.random().toString(36).substr(2, 12); }
     }
+    // Try to recover completedDays from Supabase if local is empty
+    const tryCloudRecovery = async () => {
+      const uid = anonUidRef.current;
+      if (!uid || Object.keys(localData.current.progress.completedDays).length > 0) return;
+      try {
+        const { data } = await supabase.from('user_progress').select('*').eq('user_id', uid).maybeSingle();
+        if (data && data.progress_data && Object.keys(data.progress_data).length > 0) {
+          const cloud: UserProgress = {
+            completedDays: data.progress_data,
+            stats: data.stats || localData.current.progress.stats,
+            achievements: data.achievements || localData.current.progress.achievements,
+            dailyStreak: data.daily_streak || localData.current.progress.dailyStreak,
+            lastDailyReward: data.last_daily || localData.current.progress.lastDailyReward,
+            theme: data.theme || localData.current.progress.theme,
+            autoPlayAfterGame: data.settings?.autoPlayAfterGame ?? true,
+            showStatsPanel: data.settings?.showStatsPanel ?? true,
+          };
+          setProgress(cloud);
+          try { localStorage.setItem('mm_progress', JSON.stringify(cloud)); } catch {}
+        }
+      } catch {}
+    };
+    tryCloudRecovery();
   }, []);
 
   const [user, setUser] = useState<{ email?: string | null; displayName?: string | null; uid: string } | null>(null);
@@ -162,6 +185,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: User | null) => {
       if (firebaseUser) {
         setUser({ email: firebaseUser.email, displayName: firebaseUser.displayName, uid: firebaseUser.uid });
+        // Auto-load from Supabase cloud and merge with local
+        try {
+          // Try both Firebase UID and old anon UID
+          const idsToTry = [firebaseUser.uid, anonUidRef.current].filter(Boolean);
+          for (const uid of idsToTry) {
+            const { data } = await supabase.from('user_progress').select('*').eq('user_id', uid).maybeSingle();
+            if (data && data.progress_data) {
+              const cloudDays = data.progress_data || {};
+              const cloudStats = data.stats || { total: 0, wins: 0 };
+              const cloudAchievements = data.achievements || [];
+              // Merge: take whichever has more data
+              setProgress(prev => {
+                const localDaysCount = Object.keys(prev.completedDays).length;
+                const cloudDaysCount = Object.keys(cloudDays).length;
+                const mergedDays = cloudDaysCount > localDaysCount ? { ...prev.completedDays, ...cloudDays } : { ...cloudDays, ...prev.completedDays };
+                const mergedStats = cloudStats.total > prev.stats.total ? cloudStats : prev.stats;
+                const mergedAchievements = Array.from(new Set([...prev.achievements, ...cloudAchievements]));
+                const merged: UserProgress = {
+                  completedDays: mergedDays,
+                  stats: mergedStats,
+                  achievements: mergedAchievements,
+                  dailyStreak: Math.max(prev.dailyStreak, data.daily_streak || 0),
+                  lastDailyReward: prev.lastDailyReward > (data.last_daily || '') ? prev.lastDailyReward : (data.last_daily || ''),
+                  theme: data.theme || prev.theme,
+                  autoPlayAfterGame: data.settings?.autoPlayAfterGame ?? prev.autoPlayAfterGame,
+                  showStatsPanel: data.settings?.showStatsPanel ?? prev.showStatsPanel,
+                };
+                saveProgressToLocalStorage(merged);
+                return merged;
+              });
+              break; // Found data, stop trying other IDs
+            }
+          }
+        } catch (e) { console.error('Cloud load error:', e); }
       } else {
         setUser(null);
       }
