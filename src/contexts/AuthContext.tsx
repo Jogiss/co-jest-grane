@@ -45,28 +45,73 @@ function loadLocalProgress(): { progress: UserProgress; nickname: string } {
       progress: { completedDays: {}, stats: { total: 0, wins: 0 }, achievements: [], dailyStreak: 0, lastDailyReward: '', theme: 'indigo', autoPlayAfterGame: true, showStatsPanel: true },
     };
   }
-  const savedProgress = localStorage.getItem('mm_progress');
   const savedNick = localStorage.getItem('mm_nickname');
   let nick = savedNick || '';
   if (!nick) {
     nick = `Gracz${Math.floor(10000 + Math.random() * 90000)}`;
     localStorage.setItem('mm_nickname', nick);
   }
+
+  // Try NEW format first (single mm_progress key with nested object)
+  const savedProgress = localStorage.getItem('mm_progress');
   let parsedProgress: any = {};
   try { if (savedProgress) parsedProgress = JSON.parse(savedProgress); } catch {}
-  return {
-    nickname: nick,
-    progress: {
-      completedDays: parsedProgress.completedDays || {},
-      stats: parsedProgress.stats || { total: 0, wins: 0 },
-      achievements: parsedProgress.achievements || [],
-      dailyStreak: parsedProgress.dailyStreak || 0,
-      lastDailyReward: parsedProgress.lastDailyReward || '',
-      theme: parsedProgress.theme || 'indigo',
-      autoPlayAfterGame: parsedProgress.autoPlayAfterGame ?? true,
-      showStatsPanel: parsedProgress.showStatsPanel ?? true,
-    },
+
+  // Check if new format (has completedDays key inside)
+  if (parsedProgress.completedDays) {
+    return {
+      nickname: nick,
+      progress: {
+        completedDays: parsedProgress.completedDays || {},
+        stats: parsedProgress.stats || { total: 0, wins: 0 },
+        achievements: parsedProgress.achievements || [],
+        dailyStreak: parsedProgress.dailyStreak || 0,
+        lastDailyReward: parsedProgress.lastDailyReward || '',
+        theme: parsedProgress.theme || 'indigo',
+        autoPlayAfterGame: parsedProgress.autoPlayAfterGame ?? true,
+        showStatsPanel: parsedProgress.showStatsPanel ?? true,
+      },
+    };
+  }
+
+  // OLD FORMAT — original code stored each piece under separate localStorage keys:
+  // mm_progress = completedDays directly (flat object of day keys)
+  // mm_stats = { total, wins }
+  // mm_achievements = string[]
+  // mm_daily_streak = number
+  // mm_last_daily = string
+  // mm_theme = string
+  // mm_autoplay = boolean
+  // mm_show_stats = boolean
+  const oldCompletedDays = parsedProgress || {}; // mm_progress WAS the completedDays directly
+  let oldStats = { total: 0, wins: 0 };
+  try { const s = localStorage.getItem('mm_stats'); if (s) oldStats = JSON.parse(s); } catch {}
+  let oldAchievements: string[] = [];
+  try { const a = localStorage.getItem('mm_achievements'); if (a) oldAchievements = JSON.parse(a); } catch {}
+  let oldStreak = 0;
+  try { const s = localStorage.getItem('mm_daily_streak'); if (s) oldStreak = JSON.parse(s); } catch {}
+  const oldLastDaily = localStorage.getItem('mm_last_daily') || '';
+  const oldTheme = localStorage.getItem('mm_theme') || 'indigo';
+  let oldAutoPlay = true;
+  try { const a = localStorage.getItem('mm_autoplay'); if (a !== null) oldAutoPlay = JSON.parse(a); } catch {}
+  let oldShowStats = true;
+  try { const s = localStorage.getItem('mm_show_stats'); if (s !== null) oldShowStats = JSON.parse(s); } catch {}
+
+  const progress: UserProgress = {
+    completedDays: oldCompletedDays,
+    stats: oldStats,
+    achievements: oldAchievements,
+    dailyStreak: oldStreak,
+    lastDailyReward: oldLastDaily,
+    theme: oldTheme,
+    autoPlayAfterGame: oldAutoPlay,
+    showStatsPanel: oldShowStats,
   };
+
+  // Migrate: save in new format so next load is fast
+  try { localStorage.setItem('mm_progress', JSON.stringify(progress)); } catch {}
+
+  return { nickname: nick, progress };
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -111,7 +156,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const saveProgressToLocalStorage = (p: UserProgress) => {
     if (typeof window === 'undefined') return;
-    try { localStorage.setItem('mm_progress', JSON.stringify(p)); } catch {}
+    try {
+      // Save in NEW format (single key)
+      localStorage.setItem('mm_progress', JSON.stringify(p));
+      // Also save in OLD format for backwards compatibility
+      localStorage.setItem('mm_stats', JSON.stringify(p.stats));
+      localStorage.setItem('mm_achievements', JSON.stringify(p.achievements));
+      localStorage.setItem('mm_daily_streak', JSON.stringify(p.dailyStreak));
+      if (p.lastDailyReward) localStorage.setItem('mm_last_daily', p.lastDailyReward);
+      localStorage.setItem('mm_theme', p.theme);
+      localStorage.setItem('mm_autoplay', JSON.stringify(p.autoPlayAfterGame));
+      localStorage.setItem('mm_show_stats', JSON.stringify(p.showStatsPanel));
+    } catch {}
   };
 
   const updateProgress = async (updates: Partial<UserProgress>) => {

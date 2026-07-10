@@ -908,7 +908,7 @@ const GameAppInner: React.FC = () => {
         )}
         {showAuthModal && <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} theme={currentTheme} />}
         {showMultiplayer && <MultiplayerMode userId={userId} nickname={nickname} theme={currentTheme} onClose={() => setShowMultiplayer(false)} />}
-        {showCommunity && <CommunityEvents isOpen={showCommunity} onClose={() => { setShowCommunity(false); pendingCommunityEventRef.current = null; }} userId={userId} nickname={nickname} isAdmin={false} theme={currentTheme} initialEventId={pendingCommunityEventRef.current} onInitialEventHandled={() => { pendingCommunityEventRef.current = null; }}
+        {showCommunity && <CommunityEvents isOpen={showCommunity} onClose={() => { setShowCommunity(false); pendingCommunityEventRef.current = null; }} userId={userId} nickname={nickname} isAdmin={!!user && (user.email === 'jogisek@interia.pl' || user.email === 'kamillejzak@interia.pl')} theme={currentTheme} initialEventId={pendingCommunityEventRef.current} onInitialEventHandled={() => { pendingCommunityEventRef.current = null; }}
           onPlayEvent={(communityEvent, specificSong, specificIndex, allSongs) => {
             (async () => {
               try {
