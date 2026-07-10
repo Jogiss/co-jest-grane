@@ -52,64 +52,86 @@ function loadLocalProgress(): { progress: UserProgress; nickname: string } {
     localStorage.setItem('mm_nickname', nick);
   }
 
-  // Try NEW format first (single mm_progress key with nested object)
+  // Read ALL possible localStorage keys
   const savedProgress = localStorage.getItem('mm_progress');
+  const savedStats = localStorage.getItem('mm_stats');
+  const savedAchievements = localStorage.getItem('mm_achievements');
+  const savedStreak = localStorage.getItem('mm_daily_streak');
+  const savedLastDaily = localStorage.getItem('mm_last_daily');
+  const savedTheme = localStorage.getItem('mm_theme');
+  const savedAutoPlay = localStorage.getItem('mm_autoplay');
+  const savedShowStats = localStorage.getItem('mm_show_stats');
+
   let parsedProgress: any = {};
   try { if (savedProgress) parsedProgress = JSON.parse(savedProgress); } catch {}
 
-  // Check if new format (has completedDays key inside)
-  if (parsedProgress.completedDays) {
-    return {
-      nickname: nick,
-      progress: {
-        completedDays: parsedProgress.completedDays || {},
-        stats: parsedProgress.stats || { total: 0, wins: 0 },
-        achievements: parsedProgress.achievements || [],
-        dailyStreak: parsedProgress.dailyStreak || 0,
-        lastDailyReward: parsedProgress.lastDailyReward || '',
-        theme: parsedProgress.theme || 'indigo',
-        autoPlayAfterGame: parsedProgress.autoPlayAfterGame ?? true,
-        showStatsPanel: parsedProgress.showStatsPanel ?? true,
-      },
-    };
+  // Determine completedDays from wherever they are
+  let completedDays: Record<string, any> = {};
+  let stats = { total: 0, wins: 0 };
+  let achievements: string[] = [];
+  let dailyStreak = 0;
+  let lastDailyReward = '';
+  let themeVal = 'indigo';
+  let autoPlayAfterGame = true;
+  let showStatsPanel = true;
+
+  // NEW FORMAT: mm_progress = { completedDays: {...}, stats: {...}, ... }
+  if (parsedProgress && parsedProgress.completedDays && Object.keys(parsedProgress.completedDays).length > 0) {
+    completedDays = parsedProgress.completedDays;
+    stats = parsedProgress.stats || stats;
+    achievements = parsedProgress.achievements || achievements;
+    dailyStreak = parsedProgress.dailyStreak || 0;
+    lastDailyReward = parsedProgress.lastDailyReward || '';
+    themeVal = parsedProgress.theme || 'indigo';
+    autoPlayAfterGame = parsedProgress.autoPlayAfterGame ?? true;
+    showStatsPanel = parsedProgress.showStatsPanel ?? true;
+  }
+  // OLD FORMAT: mm_progress = completedDays directly (keys like "2026-06-01-klasyczny-Polskie")
+  else if (parsedProgress && typeof parsedProgress === 'object' && !parsedProgress.completedDays) {
+    // Check if any key looks like a day key (contains dashes and status)
+    const keys = Object.keys(parsedProgress);
+    const looksLikeOldFormat = keys.length > 0 && keys.some(k => 
+      (k.includes('-klasyczny-') || k.includes('-piano-') || k.includes('-beat-') || k.includes('-reverse-') || k.startsWith('event-'))
+    );
+    if (looksLikeOldFormat) {
+      completedDays = parsedProgress;
+    }
   }
 
-  // OLD FORMAT — original code stored each piece under separate localStorage keys:
-  // mm_progress = completedDays directly (flat object of day keys)
-  // mm_stats = { total, wins }
-  // mm_achievements = string[]
-  // mm_daily_streak = number
-  // mm_last_daily = string
-  // mm_theme = string
-  // mm_autoplay = boolean
-  // mm_show_stats = boolean
-  const oldCompletedDays = parsedProgress || {}; // mm_progress WAS the completedDays directly
-  let oldStats = { total: 0, wins: 0 };
-  try { const s = localStorage.getItem('mm_stats'); if (s) oldStats = JSON.parse(s); } catch {}
-  let oldAchievements: string[] = [];
-  try { const a = localStorage.getItem('mm_achievements'); if (a) oldAchievements = JSON.parse(a); } catch {}
-  let oldStreak = 0;
-  try { const s = localStorage.getItem('mm_daily_streak'); if (s) oldStreak = JSON.parse(s); } catch {}
-  const oldLastDaily = localStorage.getItem('mm_last_daily') || '';
-  const oldTheme = localStorage.getItem('mm_theme') || 'indigo';
-  let oldAutoPlay = true;
-  try { const a = localStorage.getItem('mm_autoplay'); if (a !== null) oldAutoPlay = JSON.parse(a); } catch {}
-  let oldShowStats = true;
-  try { const s = localStorage.getItem('mm_show_stats'); if (s !== null) oldShowStats = JSON.parse(s); } catch {}
+  // Always read old separate keys and MERGE (they may have more recent data)
+  try { if (savedStats) { const s = JSON.parse(savedStats); if (s.total > stats.total) stats = s; } } catch {}
+  try { if (savedAchievements) { const a = JSON.parse(savedAchievements); if (a.length > achievements.length) achievements = a; } } catch {}
+  try { if (savedStreak) { const s = JSON.parse(savedStreak); if (s > dailyStreak) dailyStreak = s; } } catch {}
+  if (savedLastDaily && savedLastDaily > lastDailyReward) lastDailyReward = savedLastDaily;
+  if (savedTheme) themeVal = savedTheme;
+  try { if (savedAutoPlay !== null) autoPlayAfterGame = JSON.parse(savedAutoPlay); } catch {}
+  try { if (savedShowStats !== null) showStatsPanel = JSON.parse(savedShowStats); } catch {}
+
+  // Also check if old mm_progress had completedDays that new format missed
+  if (Object.keys(completedDays).length === 0 && parsedProgress && typeof parsedProgress === 'object') {
+    // Last resort: treat entire parsedProgress as completedDays if it has any keys
+    const keys = Object.keys(parsedProgress).filter(k => k !== 'completedDays' && k !== 'stats' && k !== 'achievements' && k !== 'dailyStreak' && k !== 'lastDailyReward' && k !== 'theme' && k !== 'autoPlayAfterGame' && k !== 'showStatsPanel');
+    if (keys.length > 0) {
+      keys.forEach(k => { completedDays[k] = parsedProgress[k]; });
+    }
+  }
 
   const progress: UserProgress = {
-    completedDays: oldCompletedDays,
-    stats: oldStats,
-    achievements: oldAchievements,
-    dailyStreak: oldStreak,
-    lastDailyReward: oldLastDaily,
-    theme: oldTheme,
-    autoPlayAfterGame: oldAutoPlay,
-    showStatsPanel: oldShowStats,
+    completedDays, stats, achievements, dailyStreak, lastDailyReward,
+    theme: themeVal, autoPlayAfterGame, showStatsPanel,
   };
 
-  // Migrate: save in new format so next load is fast
-  try { localStorage.setItem('mm_progress', JSON.stringify(progress)); } catch {}
+  // Save in new format + old format for compatibility
+  try {
+    localStorage.setItem('mm_progress', JSON.stringify(progress));
+    localStorage.setItem('mm_stats', JSON.stringify(stats));
+    localStorage.setItem('mm_achievements', JSON.stringify(achievements));
+    localStorage.setItem('mm_daily_streak', JSON.stringify(dailyStreak));
+    if (lastDailyReward) localStorage.setItem('mm_last_daily', lastDailyReward);
+    localStorage.setItem('mm_theme', themeVal);
+    localStorage.setItem('mm_autoplay', JSON.stringify(autoPlayAfterGame));
+    localStorage.setItem('mm_show_stats', JSON.stringify(showStatsPanel));
+  } catch {}
 
   return { nickname: nick, progress };
 }
