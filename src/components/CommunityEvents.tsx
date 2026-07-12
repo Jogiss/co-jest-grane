@@ -60,6 +60,7 @@ const CommunityEvents: React.FC<CommunityEventsProps> = ({ isOpen, onClose, user
   const [success, setSuccess] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<'newest' | 'popular' | 'liked'>('newest');
   const [statusFilter, setStatusFilter] = useState<'all' | 'done' | 'started' | 'new'>('all');
+  const [categoryFilter, setCategoryFilter] = useState<EventCategory | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [codeCopied, setCodeCopied] = useState(false);
   const [formTitle, setFormTitle] = useState('');
@@ -144,6 +145,9 @@ const CommunityEvents: React.FC<CommunityEventsProps> = ({ isOpen, onClose, user
 
   const sortedEvents = [...activeEvents]
     .filter(ev => {
+      // Category filter
+      if (categoryFilter !== 'all' && ev.category !== categoryFilter) return false;
+      // Status filter
       if (statusFilter === 'all') return true;
       const { played, completed } = getEventProgress(ev);
       if (statusFilter === 'done') return completed;
@@ -263,6 +267,7 @@ const CommunityEvents: React.FC<CommunityEventsProps> = ({ isOpen, onClose, user
             {isAdmin && <button onClick={() => { fetchPendingEvents(); setView('admin'); }} className="w-full bg-gradient-to-r from-red-500/20 to-orange-500/20 border border-red-500/30 text-red-400 py-3 rounded-xl font-bold text-sm hover:bg-red-500/30 transition-all flex items-center justify-center gap-2"><Shield size={16} /> PANEL ADMINA {pendingEvents.length > 0 && <span className="bg-red-500 text-white text-[8px] font-black w-5 h-5 rounded-full flex items-center justify-center">{pendingEvents.length}</span>}</button>}
             <div className="flex gap-2"><button onClick={() => setSortBy('newest')} className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold transition-all ${sortBy === 'newest' ? `${theme.primary} text-white` : 'bg-white/5 text-white/40 hover:bg-white/10'}`}><Clock size={14} /> Najnowsze</button><button onClick={() => setSortBy('popular')} className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold transition-all ${sortBy === 'popular' ? `${theme.primary} text-white` : 'bg-white/5 text-white/40 hover:bg-white/10'}`}><TrendingUp size={14} /> Popularne</button><button onClick={() => setSortBy('liked')} className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold transition-all ${sortBy === 'liked' ? `${theme.primary} text-white` : 'bg-white/5 text-white/40 hover:bg-white/10'}`}><ThumbsUp size={14} /> Likowane</button></div>
             <div className="flex gap-2 flex-wrap">{(['all', 'new', 'started', 'done'] as const).map(f => (<button key={f} onClick={() => setStatusFilter(f)} className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${statusFilter === f ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30' : 'bg-white/5 text-white/30 hover:bg-white/10 border border-white/5'}`}>{f === 'all' ? 'Wszystkie' : f === 'done' ? '✅ Ukończone' : f === 'started' ? '⏳ Zaczęte' : '🆕 Nowe'}</button>))}</div>
+            <div className="flex gap-2 flex-wrap">{(['all', 'music', 'cartoon', 'game', 'other'] as const).map(c => (<button key={c} onClick={() => setCategoryFilter(c)} className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${categoryFilter === c ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' : 'bg-white/5 text-white/30 hover:bg-white/10 border border-white/5'}`}>{c === 'all' ? '🎵 Wszystkie' : CATEGORY_LABELS[c]?.emoji + ' ' + CATEGORY_LABELS[c]?.label}</button>))}</div>
             <div><h3 className="text-white/40 text-[10px] font-bold uppercase tracking-widest mb-3">Aktywne eventy</h3>
               {sortedEvents.length === 0 ? <div className="text-center py-10 bg-white/[0.02] rounded-2xl border border-white/5"><span className="text-4xl mb-2 block">🌱</span><p className="text-white/30 font-bold">Brak aktywnych eventów</p></div> : <div className="space-y-3">{sortedEvents.map(ev => {
                 const { played: evPlayedCount, won: evWonCount, total: evTotalCount, completed: evIsCompleted } = getEventProgress(ev);

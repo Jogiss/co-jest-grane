@@ -27,17 +27,30 @@ export default function DebugPage() {
     const uid = localStorage.getItem('mm_uid') || '';
     setSupabaseError(null);
     try {
-      // Try user_progress
+      // Try user_progress with ANON uid
       const { data: up, error: upErr } = await supabase.from('user_progress').select('*').eq('user_id', uid).maybeSingle();
       
-      // Try game_results
-      const { data: gr, error: grErr } = await supabase.from('game_results').select('*').eq('user_id', uid).order('created_at', { ascending: false }).limit(10);
+      // Try game_results with ANON uid
+      const { data: gr } = await supabase.from('game_results').select('*').eq('user_id', uid).order('created_at', { ascending: false }).limit(10);
+
+      // Try ALL user_progress (find by nickname)
+      const nick = localStorage.getItem('mm_nickname') || '';
+      const { data: upByNick } = await supabase.from('user_progress').select('*').eq('nickname', nick).limit(5);
+
+      // Try game_results by nickname
+      const { data: grByNick } = await supabase.from('game_results').select('user_id, nickname, points, song_id, attempt, result_type, created_at').eq('nickname', nick).order('created_at', { ascending: false }).limit(20);
+
+      // Try ALL user_progress entries (to find your Firebase UID)
+      const { data: allUp } = await supabase.from('user_progress').select('user_id, nickname, stats, daily_streak, updated_at').order('updated_at', { ascending: false }).limit(20);
       
       setSupabaseData({
-        user_progress: up || (upErr ? `Error: ${upErr.message}` : 'No data'),
-        game_results_count: gr?.length || 0,
-        game_results_sample: gr?.slice(0, 3) || [],
-        uid,
+        anon_uid: uid,
+        nickname: nick,
+        user_progress_by_uid: up || (upErr ? `Error: ${upErr.message}` : 'No data for this UID'),
+        game_results_by_uid: { count: gr?.length || 0, sample: gr?.slice(0, 3) || [] },
+        user_progress_by_nickname: upByNick || 'No data',
+        game_results_by_nickname: { count: grByNick?.length || 0, sample: grByNick?.slice(0, 5) || [] },
+        recent_user_progress: allUp || [],
       });
     } catch (e: any) {
       setSupabaseError(e.message);
@@ -148,9 +161,52 @@ export default function DebugPage() {
           )}
         </section>
 
-        {/* Restore */}
+        {/* Restore from Supabase by user_id */}
         <section>
-          <h2 className="text-xl font-bold text-orange-400 mb-4">🔄 Przywróć completedDays</h2>
+          <h2 className="text-xl font-bold text-pink-400 mb-4">☁️ Przywróć z Supabase (po user_id)</h2>
+          <p className="text-white/40 text-xs mb-3">
+            Jeśli widzisz powyżej user_progress z danymi pod innym UID (np. Firebase UID), wklej ten UID tutaj żeby ściągnąć completedDays.
+          </p>
+          <div className="flex gap-3">
+            <input 
+              type="text" 
+              id="restore-uid"
+              placeholder="Wklej user_id z Supabase..."
+              className="flex-1 bg-slate-900 border border-white/10 rounded-xl px-4 py-2 text-white text-xs focus:outline-none focus:border-pink-400"
+            />
+            <button onClick={async () => {
+              const uidInput = (document.getElementById('restore-uid') as HTMLInputElement)?.value?.trim();
+              if (!uidInput) { setRestoreStatus('❌ Wpisz UID'); return; }
+              try {
+                const { data } = await supabase.from('user_progress').select('*').eq('user_id', uidInput).maybeSingle();
+                if (!data || !data.progress_data) { setRestoreStatus(`❌ Brak danych dla UID: ${uidInput}`); return; }
+                const days = data.progress_data;
+                const daysCount = Object.keys(days).length;
+                const entries = Object.values(days) as any[];
+                const total = entries.filter(v => v?.status === 'won' || v?.status === 'lost').length;
+                const wins = entries.filter(v => v?.status === 'won').length;
+                const current: any = {
+                  completedDays: days,
+                  stats: { total, wins },
+                  achievements: data.achievements || JSON.parse(localStorage.getItem('mm_achievements') || '[]'),
+                  dailyStreak: data.daily_streak || parseInt(localStorage.getItem('mm_daily_streak') || '0'),
+                  lastDailyReward: data.last_daily || localStorage.getItem('mm_last_daily') || '',
+                  theme: data.theme || localStorage.getItem('mm_theme') || 'indigo',
+                  autoPlayAfterGame: data.settings?.autoPlayAfterGame ?? true,
+                  showStatsPanel: data.settings?.showStatsPanel ?? true,
+                };
+                localStorage.setItem('mm_progress', JSON.stringify(current));
+                localStorage.setItem('mm_stats', JSON.stringify(current.stats));
+                setRestoreStatus(`✅ Przywrócono z Supabase! ${daysCount} wyzwań, ${total} zagranych, ${wins} wygranych. ODŚWIEŻ STRONĘ (Ctrl+Shift+R)!`);
+              } catch (e: any) { setRestoreStatus(`❌ Błąd: ${e.message}`); }
+            }} className="bg-pink-600 px-4 py-2 rounded-lg font-bold">Przywróć z UID</button>
+          </div>
+          {restoreStatus && <p className="mt-3 text-sm">{restoreStatus}</p>}
+        </section>
+
+        {/* Restore manual */}
+        <section>
+          <h2 className="text-xl font-bold text-orange-400 mb-4">🔄 Przywróć completedDays (ręcznie)</h2>
           <p className="text-white/40 text-xs mb-3">
             Wklej JSON z completedDays (stary format lub nowy). Możesz wziąć z eksportu, z Supabase user_progress.progress_data, lub z kopii zapasowej.
           </p>
