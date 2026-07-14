@@ -666,18 +666,60 @@ const GameAppInner: React.FC = () => {
   const effectiveCategory = activeEventSlug ? (currentSong?.category || currentCategory) : currentCategory;
   const isTitleOnlyMode = gameMode === 'klasyczny' && (effectiveCategory === 'Bajki' || effectiveCategory === 'Gry');
 
+  // Search event songs locally for suggestions (community events)
+  const searchEventSongsLocal = (query: string, cat: string): { movies: MovieSuggestion[], games: GameSuggestion[], songs: SongSuggestion[] } => {
+    const q = query.toLowerCase().trim();
+    if (q.length < 2) return { movies: [], games: [], songs: [] };
+    const evSongs = activeEventSongsRef.current;
+    if (!evSongs || evSongs.length === 0) return { movies: [], games: [], songs: [] };
+    const matched = evSongs.filter((s: any) => {
+      const title = (s.title || '').toLowerCase();
+      const artist = (s.artist || '').toLowerCase();
+      return title.includes(q) || artist.includes(q) || q.split(' ').some((w: string) => w.length > 2 && (title.includes(w) || artist.includes(w)));
+    });
+    if (cat === 'Bajki') return { movies: matched.map((s: any) => ({ title: s.title })), games: [], songs: [] };
+    if (cat === 'Gry') return { movies: [], games: matched.map((s: any) => ({ title: s.title })), songs: [] };
+    return { movies: [], games: [], songs: matched.map((s: any) => ({ title: s.title, artist: s.artist || '' })) };
+  };
+
   const handleGuessInput = (value: string) => {
     const cleaned = value.replace(/[,;|\/\\&]/g, '').slice(0, MAX_GUESS_LENGTH);
     setGuessTitle(cleaned);
     setSpotifySuggestions([]); setMovieSuggestions([]); setGameSuggestions([]);
     if (cleaned.trim().length >= 2) {
       const effectiveCat = activeEventSlug ? (currentSong?.category || currentCategory) : currentCategory;
-      if (effectiveCat === 'Bajki') { searchMoviesDebounced(cleaned, (results: MovieSuggestion[]) => { setMovieSuggestions(results); setShowSuggestions(results.length > 0); }); }
+      // Get event song suggestions first
+      const evResults = activeEventSlug ? searchEventSongsLocal(cleaned, effectiveCat) : { movies: [], games: [], songs: [] };
+
+      if (effectiveCat === 'Bajki') {
+        searchMoviesDebounced(cleaned, (results: MovieSuggestion[]) => {
+          // Merge event songs + bajki suggestions, deduplicate
+          const combined = [...evResults.movies];
+          const existingTitles = new Set(combined.map(m => m.title.toLowerCase()));
+          results.forEach(r => { if (!existingTitles.has(r.title.toLowerCase())) combined.push(r); });
+          setMovieSuggestions(combined);
+          setShowSuggestions(combined.length > 0);
+        });
+      }
       else if (effectiveCat === 'Gry') {
-        searchGamesLocalDebounced(cleaned, (localResults: GameSuggestion[]) => { setGameSuggestions(localResults); setShowSuggestions(localResults.length > 0); });
+        searchGamesLocalDebounced(cleaned, (localResults: GameSuggestion[]) => {
+          const combined = [...evResults.games];
+          const existingTitles = new Set(combined.map(g => g.title.toLowerCase()));
+          localResults.forEach(r => { if (!existingTitles.has(r.title.toLowerCase())) combined.push(r); });
+          setGameSuggestions(combined);
+          setShowSuggestions(combined.length > 0);
+        });
         searchGamesDebounced(cleaned, (rawgResults: GameSuggestion[]) => { if (rawgResults.length > 0) { setGameSuggestions(prev => { const existingTitles = new Set(prev.map(g => g.title.toLowerCase())); const unique = rawgResults.filter(g => !existingTitles.has(g.title.toLowerCase())); return [...prev, ...unique]; }); setShowSuggestions(true); } });
       }
-      else if (cleaned.trim().length >= 3) { searchSongsDebounced(cleaned, (results: SongSuggestion[]) => { setSpotifySuggestions(results); setShowSuggestions(results.length > 0); }); }
+      else if (cleaned.trim().length >= 3) {
+        searchSongsDebounced(cleaned, (results: SongSuggestion[]) => {
+          const combined = [...evResults.songs];
+          const existingKeys = new Set(combined.map(s => `${s.title}|${s.artist}`.toLowerCase()));
+          results.forEach(r => { if (!existingKeys.has(`${r.title}|${r.artist}`.toLowerCase())) combined.push(r); });
+          setSpotifySuggestions(combined);
+          setShowSuggestions(combined.length > 0);
+        });
+      }
       else setShowSuggestions(false);
     } else setShowSuggestions(false);
   };
@@ -919,12 +961,15 @@ const GameAppInner: React.FC = () => {
                   if (!csongs || csongs.length === 0) return;
                   sorted = [...csongs].sort((a: any, b: any) => (a.date || a.id).toString().localeCompare((b.date || b.id).toString()));
                 }
-                setEventSongs(sorted);
-                activeEventSongsRef.current = sorted;
+                // Inject event category into each song so startEventGame knows the category
+                const eventCat = communityEvent.category === 'cartoon' ? 'bajki' : communityEvent.category === 'game' ? 'gry' : communityEvent.category === 'music' ? 'muzyka' : communityEvent.category;
+                const songsWithCat = sorted.map((s: any) => ({ ...s, category: s.category || eventCat }));
+                setEventSongs(songsWithCat);
+                activeEventSongsRef.current = songsWithCat;
                 // Set community event name BEFORE calling startEventGame
                 setActiveEventName(communityEvent.title || 'Event Społeczności');
-                const target = specificSong || sorted[0];
-                const idx = specificIndex || (sorted.indexOf(target) + 1);
+                const target = specificSong ? { ...specificSong, category: (specificSong as any).category || eventCat } : songsWithCat[0];
+                const idx = specificIndex || (songsWithCat.indexOf(songsWithCat.find((s: any) => s.id === target.id) || songsWithCat[0]) + 1);
                 setShowCommunity(false);
                 // Increment play count
                 try { await supabase.from('community_events').update({ play_count: (communityEvent.play_count || 0) + 1 }).eq('id', communityEvent.id); } catch {}
@@ -1351,15 +1396,17 @@ const GameAppInner: React.FC = () => {
                     const pHasNext = activeEventSlug ? !!pEvNextAvail : !!isNextAvailP;
                     return (
                     <div className="flex items-center justify-center w-full max-w-7xl px-4 relative">
-                      {/* Side nav buttons - visible during playing, BLOCKED after game ends (won/lost) until result view */}
-                      <button disabled={!pHasPrev || navCooldown || gameStatus !== 'playing'} onClick={() => { if (activeEventSlug && pEvPrev) startEventGame(activeEventSlug, pEvPrev, pEvIdx); else if (prevDateP) startDailyGame(prevDateP); }} className={`fixed left-2 md:left-6 lg:left-[calc(50%-28rem)] top-[45%] z-30 px-3 py-4 md:px-4 md:py-5 rounded-2xl bg-white/[0.07] hover:bg-white/15 backdrop-blur-md border border-white/10 flex flex-col items-center justify-center gap-1 shadow-lg transition-all ${!pHasPrev || navCooldown || gameStatus !== 'playing' ? 'opacity-0 pointer-events-none' : ''}`}>
-                        <ChevronLeft size={22} className="text-white/50" />
-                        <span className="text-[8px] font-black text-white/40 uppercase tracking-wider">Poprzednie</span>
-                      </button>
-                      <button disabled={!pHasNext || navCooldown || gameStatus !== 'playing'} onClick={() => { if (activeEventSlug && pEvNext) startEventGame(activeEventSlug, pEvNext, pEvIdx + 2); else if (nextDateP && isNextAvailP) startDailyGame(nextDateP); }} className={`fixed right-2 md:right-6 lg:right-[calc(50%-28rem)] top-[45%] z-30 px-3 py-4 md:px-4 md:py-5 rounded-2xl bg-white/[0.07] hover:bg-white/15 backdrop-blur-md border border-white/10 flex flex-col items-center justify-center gap-1 shadow-lg transition-all ${!pHasNext || navCooldown || gameStatus !== 'playing' ? 'opacity-0 pointer-events-none' : ''}`}>
-                        <ChevronRight size={22} className="text-white/50" />
-                        <span className="text-[8px] font-black text-white/40 uppercase tracking-wider">Następne</span>
-                      </button>
+                      {/* Side nav buttons - visible ONLY during active playing, hidden after game ends */}
+                      {gameStatus === 'playing' && (<>
+                        <button disabled={!pHasPrev || navCooldown} onClick={() => { if (activeEventSlug && pEvPrev) startEventGame(activeEventSlug, pEvPrev, pEvIdx); else if (prevDateP) startDailyGame(prevDateP); }} className={`fixed left-2 md:left-6 lg:left-[calc(50%-28rem)] top-[45%] z-30 px-3 py-4 md:px-4 md:py-5 rounded-2xl bg-white/[0.07] hover:bg-white/15 backdrop-blur-md border border-white/10 flex flex-col items-center justify-center gap-1 shadow-lg transition-all ${!pHasPrev || navCooldown ? 'opacity-0 pointer-events-none' : ''}`}>
+                          <ChevronLeft size={22} className="text-white/50" />
+                          <span className="text-[8px] font-black text-white/40 uppercase tracking-wider">Poprzednie</span>
+                        </button>
+                        <button disabled={!pHasNext || navCooldown} onClick={() => { if (activeEventSlug && pEvNext) startEventGame(activeEventSlug, pEvNext, pEvIdx + 2); else if (nextDateP && isNextAvailP) startDailyGame(nextDateP); }} className={`fixed right-2 md:right-6 lg:right-[calc(50%-28rem)] top-[45%] z-30 px-3 py-4 md:px-4 md:py-5 rounded-2xl bg-white/[0.07] hover:bg-white/15 backdrop-blur-md border border-white/10 flex flex-col items-center justify-center gap-1 shadow-lg transition-all ${!pHasNext || navCooldown ? 'opacity-0 pointer-events-none' : ''}`}>
+                          <ChevronRight size={22} className="text-white/50" />
+                          <span className="text-[8px] font-black text-white/40 uppercase tracking-wider">Następne</span>
+                        </button>
+                      </>)}
                     <div className="flex flex-col items-center gap-6 w-full max-w-xl z-10 py-4 px-4">
                       <div id="yt-game-player" className="hidden" />
                       <div className="w-full flex justify-between items-center mb-2 gap-2">
@@ -1395,13 +1442,13 @@ const GameAppInner: React.FC = () => {
                         </div>
                         <div className="bg-white/5 border-2 rounded-2xl transition-all p-1 border-white/10 focus-within:border-white/30">
                           <div className="flex items-center px-4 py-3"><input type="text" placeholder={isTitleOnlyMode ? (currentCategory === 'Gry' ? "🎮 Wpisz nazwę gry..." : "🎬 Wpisz nazwę bajki/filmu...") : "🎵 Wpisz tytuł i wykonawcę..."} value={guessTitle} onChange={(e) => handleGuessInput(e.target.value)} onKeyDown={(e) => { handleKeyDown(e); if (e.key === 'Enter') setShowSuggestions(false); }} onFocus={() => { if (spotifySuggestions.length > 0 || movieSuggestions.length > 0 || gameSuggestions.length > 0) setShowSuggestions(true); }} onBlur={() => setTimeout(() => setShowSuggestions(false), 200)} disabled={feedback.title && feedback.artist} maxLength={MAX_GUESS_LENGTH} className="w-full bg-transparent outline-none text-lg font-bold text-white placeholder:text-white/20" /></div>
-                          {showSuggestions && spotifySuggestions.length > 0 && gameStatus === 'playing' && currentCategory !== 'Bajki' && currentCategory !== 'Gry' && (
+                          {showSuggestions && spotifySuggestions.length > 0 && gameStatus === 'playing' && effectiveCategory !== 'Bajki' && effectiveCategory !== 'Gry' && (
                             <div className="mx-2 mb-1 bg-slate-800 border border-white/10 rounded-xl overflow-hidden max-h-56 overflow-y-auto">{spotifySuggestions.map((s, i) => (<button key={i} onClick={() => selectSuggestion(s)} className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/10 transition-all text-left border-b border-white/5 last:border-0"><div className="min-w-0"><p className="text-white text-xs font-bold truncate">{s.title}</p><p className="text-white/40 text-[10px] truncate">{s.artist}</p></div></button>))}</div>
                           )}
-                          {showSuggestions && movieSuggestions.length > 0 && gameStatus === 'playing' && currentCategory === 'Bajki' && (
+                          {showSuggestions && movieSuggestions.length > 0 && gameStatus === 'playing' && effectiveCategory === 'Bajki' && (
                             <div className="mx-2 mb-1 bg-slate-800 border border-white/10 rounded-xl overflow-hidden max-h-56 overflow-y-auto">{movieSuggestions.map((s, i) => (<button key={i} onClick={() => selectMovieSuggestion(s)} className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/10 transition-all text-left border-b border-white/5 last:border-0"><div className="min-w-0"><p className="text-white text-xs font-bold truncate">{s.title}</p></div></button>))}</div>
                           )}
-                          {showSuggestions && gameSuggestions.length > 0 && gameStatus === 'playing' && currentCategory === 'Gry' && (
+                          {showSuggestions && gameSuggestions.length > 0 && gameStatus === 'playing' && effectiveCategory === 'Gry' && (
                             <div className="mx-2 mb-1 bg-slate-800 border border-white/10 rounded-xl overflow-hidden max-h-56 overflow-y-auto">{gameSuggestions.map((s, i) => (<button key={i} onClick={() => selectGameSuggestion(s)} className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/10 transition-all text-left border-b border-white/5 last:border-0"><div className="min-w-0 flex-1"><p className="text-white text-xs font-bold truncate">{s.title}</p></div></button>))}</div>
                           )}
                         </div>
