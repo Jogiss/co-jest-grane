@@ -141,6 +141,7 @@ const GameAppInner: React.FC = () => {
     slug: string;
     aktywny: boolean;
     created_at: string;
+    color?: string;
   }
   interface EventSong {
     id: number;
@@ -778,6 +779,7 @@ const GameAppInner: React.FC = () => {
       audioUrl: (eventSong.audio_url || eventSong.audioUrl || '').trim(),
       previewStart: Number(eventSong.preview_start || eventSong.start_time_seconds || eventSong.previewStart) || 0,
       date: eventSong.date || undefined,
+      gatunek: eventSong.label || undefined,
       youtubeUrl: eventSong.youtube_url || undefined,
     };
     destroyYtPlayer();
@@ -1047,7 +1049,8 @@ const GameAppInner: React.FC = () => {
                         const evPct = evTotal > 0 ? Math.round((evWon / evTotal) * 100) : 0;
                         return (
                         <button key={ev.id} onClick={async () => { setSelectedEvent(ev); try { const { data } = await supabase.from('event_songs').select('*').eq('event_slug', ev.slug).order('id'); if (data) setEventSongs(data); } catch {} }}
-                          className={`relative bg-gradient-to-br ${evDone ? 'from-green-500/10 to-emerald-500/5 border-green-500/30 hover:border-green-500/50' : 'from-yellow-500/10 to-orange-500/5 border-yellow-500/20 hover:border-yellow-500/40'} border rounded-3xl p-6 text-left transition-all group overflow-hidden`}>
+                          className={`relative bg-gradient-to-br ${evDone ? 'from-green-500/10 to-emerald-500/5 border-green-500/30 hover:border-green-500/50' : ev.color ? '' : 'from-yellow-500/10 to-orange-500/5 border-yellow-500/20 hover:border-yellow-500/40'} border rounded-3xl p-6 text-left transition-all group overflow-hidden`}
+                          style={!evDone && ev.color ? { background: `linear-gradient(135deg, ${ev.color}15, ${ev.color}05)`, borderColor: `${ev.color}30` } : undefined}>
                           {evTotal > 0 && <div className={`absolute top-3 right-3 text-[10px] font-black px-2.5 py-1 rounded-full border z-20 ${evDone ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'}`}>{evPlayed}/{evTotal}</div>}
                           <span className="text-4xl mb-3 block">{ev.emoji}</span>
                           <h3 className="text-white font-black text-xl">{ev.name}</h3>
