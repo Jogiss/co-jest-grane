@@ -166,6 +166,7 @@ const GameAppInner: React.FC = () => {
   const [achievementPopup, setAchievementPopup] = useState<{ name: string, icon: string } | null>(null);
   const [viewingPlayer, setViewingPlayer] = useState<{ nickname: string, points: number, wins: number, total_games: number, rank: number, odwiedza: string } | null>(null);
   const [onlinePlayers, setOnlinePlayers] = useState(1);
+  const [ankietaLink, setAnkietaLink] = useState<string | null>(null);
 
   useEffect(() => {
     if (progress.theme && progress.theme in themeConfig) setTheme(progress.theme as Theme);
@@ -430,6 +431,15 @@ const GameAppInner: React.FC = () => {
       } catch {}
     };
     fetchEvents();
+    // Fetch ankieta link from Supabase table 'ankieta'
+    const fetchAnkieta = async () => {
+      try {
+        const { data, error } = await supabase.from('ankieta').select('link, aktywna').eq('aktywna', true).order('created_at', { ascending: false }).limit(1).maybeSingle();
+        if (data?.link) setAnkietaLink(data.link);
+        if (error) console.error('Ankieta fetch error:', error.message);
+      } catch (e) { console.error('Ankieta error:', e); }
+    };
+    fetchAnkieta();
     setTimeout(() => fetchPlayerRank(), 2000);
     setTimeout(() => checkNewAchievements(), 3000);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1023,7 +1033,20 @@ const GameAppInner: React.FC = () => {
                 </div>
               ) : (
                 <div className="w-full max-w-3xl space-y-8">
-                  <button onClick={() => setShowEvents(false)} className="flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/10 px-4 py-2.5 rounded-xl transition-all group"><ArrowLeft size={16} className="text-white/60 group-hover:text-white" /><span className="text-white/60 group-hover:text-white text-xs font-bold uppercase tracking-wider">Powrót do menu</span></button>
+                  <div className="flex items-center justify-between gap-3">
+                    <button onClick={() => setShowEvents(false)} className="flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/10 px-4 py-2.5 rounded-xl transition-all group"><ArrowLeft size={16} className="text-white/60 group-hover:text-white" /><span className="text-white/60 group-hover:text-white text-xs font-bold uppercase tracking-wider">Powrót do menu</span></button>
+                    {/* Top-right: Ankieta + Zaproponuj */}
+                    <div className="flex gap-2">
+                      {ankietaLink && (
+                        <a href={ankietaLink} target="_blank" rel="noopener noreferrer" className="bg-gradient-to-r from-red-500 to-pink-600 text-white px-5 py-3 rounded-2xl font-black text-sm flex items-center gap-2 shadow-lg hover:scale-105 active:scale-95 transition-all animate-pulse">
+                          🗳️ GŁOSUJ NA EVENT
+                        </a>
+                      )}
+                      <a href="https://forms.gle/JaXiML4prXRw2myu7" target="_blank" rel="noopener noreferrer" className="bg-white/10 border border-white/10 hover:bg-white/20 text-white px-4 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 transition-all">
+                        💡 Zaproponuj
+                      </a>
+                    </div>
+                  </div>
                   <div className="text-center"><span className="text-5xl mb-3 block">🎪</span><h2 className="text-4xl font-black text-white uppercase">EVENTY</h2><p className="text-white/40 text-sm mt-2">Specjalne wyzwania tematyczne</p></div>
                   <div className="flex gap-2 flex-wrap">
                     {(['all', 'new', 'started', 'done'] as const).map(f => (<button key={f} onClick={() => setEventFilter(f)} className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${eventFilter === f ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' : 'bg-white/5 text-white/30 hover:bg-white/10 border border-white/5'}`}>{f === 'all' ? 'Wszystkie' : f === 'done' ? '✅ Ukończone' : f === 'started' ? '⏳ Zaczęte' : '🆕 Nowe'}</button>))}
@@ -1316,10 +1339,19 @@ const GameAppInner: React.FC = () => {
                       <button onClick={() => setShowCommunity(true)} className="w-full max-w-2xl relative z-10 group">
                         <div className="bg-gradient-to-r from-indigo-500/20 to-cyan-500/20 border border-indigo-500/30 hover:border-indigo-500/50 rounded-2xl p-4 flex items-center gap-4 transition-all hover:scale-[1.01] active:scale-[0.99]"><div className="bg-gradient-to-br from-indigo-600 to-cyan-600 p-3 rounded-xl shrink-0 shadow-lg group-hover:scale-110 transition-transform"><span className="text-2xl">🌍</span></div><div className="flex-1 min-w-0 text-left"><p className="text-white font-bold text-sm flex items-center gap-2">SPOŁECZNOŚĆ <span className="text-[8px] bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full font-black uppercase tracking-wider">NEW</span></p><p className="text-white/40 text-xs">Twórz własne eventy i graj w eventy innych!</p></div><ChevronRight size={18} className="text-white/20 group-hover:text-cyan-400 transition-colors shrink-0" /></div>
                       </button>
-                      {/* Events */}
-                      <button onClick={() => { setShowEvents(true); setSelectedEvent(null); }} className="w-full max-w-2xl relative z-10 group">
-                        <div className="bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border border-yellow-500/30 hover:border-yellow-500/50 rounded-2xl p-4 flex items-center gap-4 transition-all hover:scale-[1.01] active:scale-[0.99]"><div className="bg-gradient-to-br from-yellow-500 to-orange-600 p-3 rounded-xl shrink-0 shadow-lg group-hover:scale-110 transition-transform"><span className="text-2xl">🎪</span></div><div className="flex-1 min-w-0 text-left"><p className="text-white font-bold text-sm flex items-center gap-2">EVENTY TWÓRCY {events.length > 0 && <span className="bg-green-500 text-white text-[7px] font-black px-1.5 py-0.5 rounded-full uppercase animate-pulse">{events.length} aktywne</span>}</p><p className="text-white/40 text-xs">Specjalne wyzwania tematyczne!</p></div><ChevronRight size={18} className="text-white/20 group-hover:text-yellow-400 transition-colors shrink-0" /></div>
-                      </button>
+                      {/* Events + Ankieta bubble */}
+                      <div className="w-full max-w-2xl relative z-10 flex items-center gap-3">
+                        <button onClick={() => { setShowEvents(true); setSelectedEvent(null); }} className="flex-1 group">
+                          <div className="bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border border-yellow-500/30 hover:border-yellow-500/50 rounded-2xl p-4 flex items-center gap-4 transition-all hover:scale-[1.01] active:scale-[0.99]"><div className="bg-gradient-to-br from-yellow-500 to-orange-600 p-3 rounded-xl shrink-0 shadow-lg group-hover:scale-110 transition-transform"><span className="text-2xl">🎪</span></div><div className="flex-1 min-w-0 text-left"><p className="text-white font-bold text-sm flex items-center gap-2">EVENTY TWÓRCY {events.length > 0 && <span className="bg-green-500 text-white text-[7px] font-black px-1.5 py-0.5 rounded-full uppercase animate-pulse">{events.length} aktywne</span>}</p><p className="text-white/40 text-xs">Specjalne wyzwania tematyczne!</p></div><ChevronRight size={18} className="text-white/20 group-hover:text-yellow-400 transition-colors shrink-0" /></div>
+                        </button>
+                        {/* Bubble RIGHT of the card */}
+                        {ankietaLink && (
+                          <a href={ankietaLink} target="_blank" rel="noopener noreferrer" className="shrink-0 bg-gradient-to-br from-red-500 to-pink-600 text-white text-[9px] font-black px-3 py-3 rounded-2xl shadow-lg flex flex-col items-center gap-1 hover:scale-105 transition-transform">
+                            <span className="text-lg">🗳️</span>
+                            <span className="leading-tight text-center">Zagłosuj<br/>na event!</span>
+                          </a>
+                        )}
+                      </div>
                       <div className="flex flex-col sm:flex-row gap-3 w-full max-w-2xl relative z-10">
                         <button onClick={() => setActiveModal('howtoplay')} className={`flex-1 ${currentTheme.primary} ${currentTheme.hover} text-white py-3.5 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2 shadow-lg`}><HelpCircle size={18} /> JAK GRAĆ?</button>
                         <button onClick={() => { setLeaderboardTab(10); fetchLeaderboard(10); setViewingPlayer(null); setActiveModal('leaderboard'); }} className="flex-1 bg-white/10 border border-white/10 text-white py-3.5 rounded-2xl font-bold text-sm hover:bg-white/20 transition-all flex items-center justify-center gap-2">🏆 RANKING</button>

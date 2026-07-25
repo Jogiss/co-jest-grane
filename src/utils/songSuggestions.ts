@@ -28,6 +28,7 @@ async function loadSongs(): Promise<void> {
         if (batch.length < batchSize) break;
         from += batchSize;
       }
+      // Add from community_event_songs (active events)
       try {
         const { data: activeEvIds } = await supabase.from('community_events').select('id').eq('status', 'active');
         if (activeEvIds && activeEvIds.length > 0) {
@@ -40,6 +41,28 @@ async function loadSongs(): Promise<void> {
               if (cd.title && !existing.has(key)) { allData.push({ title: cd.title, artist: cd.artist || '' }); existing.add(key); }
             });
           }
+        }
+      } catch {}
+      // Add from Piosenki (daily songs, piano, beat, reverse)
+      try {
+        const { data: piosenki } = await supabase.from('Piosenki').select('title, artist');
+        if (piosenki) {
+          const existing = new Set(allData.map(d => `${d.title}|${d.artist}`.toLowerCase()));
+          piosenki.forEach((p: any) => {
+            const key = `${p.title}|${p.artist || ''}`.toLowerCase();
+            if (p.title && !existing.has(key)) { allData.push({ title: p.title, artist: p.artist || '' }); existing.add(key); }
+          });
+        }
+      } catch {}
+      // Add from event_songs (twórcy events)
+      try {
+        const { data: evSongs } = await supabase.from('event_songs').select('title, artist');
+        if (evSongs) {
+          const existing = new Set(allData.map(d => `${d.title}|${d.artist}`.toLowerCase()));
+          evSongs.forEach((es: any) => {
+            const key = `${es.title}|${es.artist || ''}`.toLowerCase();
+            if (es.title && !existing.has(key)) { allData.push({ title: es.title, artist: es.artist || '' }); existing.add(key); }
+          });
         }
       } catch {}
       songsCache = allData;

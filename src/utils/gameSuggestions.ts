@@ -2,25 +2,7 @@ import { supabase } from '../lib/supabase';
 
 export interface GameSuggestion { title: string; year?: string; }
 
-const BUILTIN_GAMES: string[] = [
-  'Grand Theft Auto V', 'GTA V', 'Mortal Kombat', 'The Last Of Us', 'Super Mario Bros',
-  'Sea of Thieves', 'Resident Evil', 'Minecraft', 'Crash Bandicoot', 'Elden Ring',
-  'Valorant', 'Wiedźmin 3', 'The Witcher 3', 'Tetris', 'GTA San Andreas',
-  'Assassin\'s Creed IV Black Flag', 'Skyrim', 'Dying Light', 'Clash Royale',
-  'Red Dead Redemption 2', 'Zelda', 'God of War', 'Forza Horizon', 'Undertale',
-  'Among Us', 'Doom', 'Team Fortress 2', 'Terraria', 'Portal', 'Subnautica',
-  'Hogwarts Legacy', 'Dark Souls 3', 'Hollow Knight', 'Outlast', 'Apex Legends',
-  'Geometry Dash', 'Fortnite', 'League of Legends', 'Counter-Strike', 'CS2',
-  'Overwatch 2', 'Rocket League', 'FIFA', 'Roblox', 'Cyberpunk 2077',
-  'Halo Infinite', 'Fallout 4', 'The Sims 4', 'Stardew Valley', 'Cuphead',
-  'Hades', 'Celeste', 'It Takes Two', 'Half-Life 2', 'Dota 2', 'PUBG',
-  'Genshin Impact', 'Baldur\'s Gate 3', 'Phasmophobia', 'Dead by Daylight',
-  'Five Nights at Freddy\'s', 'FNAF', 'Brawl Stars', 'Clash of Clans',
-  'Need for Speed', 'Pokémon', 'Sonic', 'Pac-Man', 'Tomb Raider',
-  'Rainbow Six Siege', 'Hitman', 'Mafia', 'Death Stranding',
-  'Detroit: Become Human', 'Civilization', 'Age of Empires', 'StarCraft',
-  'Cities Skylines', 'Rust', 'Valheim', 'Beat Saber', 'Life is Strange',
-];
+// No built-in games - all loaded from Supabase game_suggestions table
 
 let dbGames: string[] | null = null;
 let loadingPromise: Promise<void> | null = null;
@@ -44,10 +26,7 @@ function normalizeForSearch(text: string): string {
 }
 
 function getAllGames(): string[] {
-  const all = [...BUILTIN_GAMES];
-  if (dbGames && dbGames.length > 0) all.push(...dbGames);
-  const seen = new Set<string>();
-  return all.filter(g => { const norm = normalizeForSearch(g); if (seen.has(norm)) return false; seen.add(norm); return true; });
+  return dbGames || [];
 }
 
 export async function searchGamesLocal(query: string): Promise<GameSuggestion[]> {
