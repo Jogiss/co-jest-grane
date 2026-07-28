@@ -2,20 +2,21 @@ import { supabase } from '../lib/supabase';
 
 export interface GameSuggestion { title: string; year?: string; }
 
-// No built-in games - all loaded from Supabase game_suggestions table
-
 let dbGames: string[] | null = null;
 let loadingPromise: Promise<void> | null = null;
+let lastLoadTime = 0;
+const CACHE_TTL = 30 * 60 * 1000; // 30 min cache
 
 async function loadFromSupabase(): Promise<void> {
-  if (dbGames !== null) return;
+  if (dbGames && Date.now() - lastLoadTime < CACHE_TTL) return;
   if (loadingPromise) { await loadingPromise; return; }
   loadingPromise = (async () => {
     try {
       const { data, error } = await supabase.from('game_suggestions').select('title').order('title');
       if (!error && data && data.length > 0) dbGames = data.map((d: any) => d.title);
       else dbGames = [];
-    } catch { dbGames = []; }
+      lastLoadTime = Date.now();
+    } catch { if (!dbGames) dbGames = []; }
   })();
   await loadingPromise;
   loadingPromise = null;
@@ -25,17 +26,13 @@ function normalizeForSearch(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
 }
 
-function getAllGames(): string[] {
-  return dbGames || [];
-}
-
 export async function searchGamesLocal(query: string): Promise<GameSuggestion[]> {
   if (!query || query.trim().length < 2) return [];
   await loadFromSupabase();
   const normalized = normalizeForSearch(query);
   const words = normalized.split(' ').filter(w => w.length > 1);
-  if (words.length === 0) return [];
-  return getAllGames().filter(game => {
+  if (words.length === 0 || !dbGames) return [];
+  return dbGames.filter(game => {
     const normGame = normalizeForSearch(game);
     return words.every(w => {
       if (normGame.includes(w)) return true;
@@ -58,7 +55,8 @@ let gameSearchTimeout: ReturnType<typeof setTimeout> | null = null;
 export function searchGamesLocalDebounced(query: string, callback: (results: GameSuggestion[]) => void): void {
   if (gameSearchTimeout) clearTimeout(gameSearchTimeout);
   if (!query || query.trim().length < 2) { callback([]); return; }
-  gameSearchTimeout = setTimeout(async () => { callback(await searchGamesLocal(query)); }, 100);
+  gameSearchTimeout = setTimeout(async () => { callback(await searchGamesLocal(query)); }, 150);
 }
 
-export function preloadGameSuggestions(): void { loadFromSupabase(); }
+// DON'T preload - load lazily
+export function preloadGameSuggestions(): void {}

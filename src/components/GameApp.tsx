@@ -210,11 +210,15 @@ const GameAppInner: React.FC = () => {
 
   const fetchGlobalStats = async (songId: string) => {
     try {
-      const { data } = await supabase.from('wyniki').select('attempt').eq('song_id', songId);
       const counts = [0, 0, 0, 0, 0, 0, 0];
-      if (data) data.forEach((r: any) => { const idx = (r.attempt === 0 || r.attempt === 7) ? 6 : r.attempt - 1; if (idx >= 0 && idx <= 6) counts[idx]++; });
+      // 1. Read aggregated data (1 row per song — fast!)
+      const { data: agg } = await supabase.from('wyniki_aggregate').select('a1,a2,a3,a4,a5,a6,ax').eq('song_id', songId).maybeSingle();
+      if (agg) { counts[0]=agg.a1||0; counts[1]=agg.a2||0; counts[2]=agg.a3||0; counts[3]=agg.a4||0; counts[4]=agg.a5||0; counts[5]=agg.a6||0; counts[6]=agg.ax||0; }
+      // 2. Add fresh (non-aggregated) wyniki on top
+      const { data: fresh } = await supabase.from('wyniki').select('attempt').eq('song_id', songId).limit(200);
+      if (fresh) fresh.forEach((r: any) => { const idx = (r.attempt === 0 || r.attempt === 7) ? 6 : r.attempt - 1; if (idx >= 0 && idx <= 6) counts[idx]++; });
       setGlobalStats(counts);
-    } catch { setGlobalStats([12, 45, 30, 15, 10, 5, 8]); }
+    } catch { setGlobalStats([0, 0, 0, 0, 0, 0, 0]); }
   };
 
   const oldAnonUid = typeof window !== 'undefined' ? (localStorage.getItem('mm_uid') || '') : '';
@@ -392,7 +396,7 @@ const GameAppInner: React.FC = () => {
             if (rawMode === 'beat' || rawMode === 'bity') normalizedMode = 'beat';
             else if (rawMode === 'reverse' || rawMode === 'od tylu') normalizedMode = 'reverse';
             else if (rawMode === 'klasyczny') normalizedMode = 'klasyczny';
-            let rawDate = (s.date || s.data || s.created_at || "").toString().split('T')[0].split(' ')[0].trim();
+            let rawDate = (s.date || s.data || s.created_at || '').toString().split('T')[0].split(' ')[0].trim();
             const normalizedDate = rawDate.replace(/\./g, '-');
             return { id: s.id ? s.id.toString() : `song-${index}`, title: s.title || "Nieznany tytuł", artist: s.artist || "Nieznany artysta", category: normalizedCat, mode: normalizedMode, audioUrl: (s.audio_url || "").trim(), previewStart: isNaN(Number(s.preview_start)) ? 0 : Number(s.preview_start), date: normalizedDate || undefined, gatunek: s.gatunek || undefined, youtubeUrl: s.youtube_url || undefined };
           });
@@ -799,7 +803,7 @@ const GameAppInner: React.FC = () => {
     setShowEvents(false);
     if (saved) {
       if (saved.status === 'playing') { setAttempt(saved.attempt); setHistory(saved.history); setFeedback(saved.feedback); setPartialPointsEarned(saved.partialPoints || 0); }
-      else { setAttempt(saved.attempt - 1); setGameStatus(saved.status); setHistory(saved.history); setFeedback({ title: true, artist: true }); setGuessTitle(song.title.split(',')[0]); setGuessArtist(song.artist.split(',')[0]); setPartialPointsEarned(saved.partialPoints || 0); }
+      else { const safeTitle = song.title.split(',').map(t => t.trim()).filter(Boolean)[0] || song.title; const safeArtist = song.artist.split(',').map(a => a.trim()).filter(Boolean)[0] || song.artist; setAttempt(saved.attempt - 1); setGameStatus(saved.status); setHistory(saved.history); setFeedback({ title: true, artist: true }); setGuessTitle(safeTitle); setGuessArtist(safeArtist); setPartialPointsEarned(saved.partialPoints || 0); }
     }
     setView('playing');
   };
@@ -815,7 +819,7 @@ const GameAppInner: React.FC = () => {
     setCurrentSong(dailySong); fetchGlobalStats(dailySong.id); audioEngine.playUiClick();
     if (saved) {
       if (saved.status === 'playing') { setAttempt(saved.attempt); setHistory(saved.history); setFeedback(saved.feedback); setPartialPointsEarned(saved.partialPoints || 0); }
-      else { setAttempt(saved.attempt - 1); setGameStatus(saved.status); setHistory(saved.history); setFeedback({ title: true, artist: true }); setGuessTitle(dailySong.title.split(',')[0]); setGuessArtist(dailySong.artist.split(',')[0]); setPartialPointsEarned(saved.partialPoints || 0); }
+      else { const safeTitle = dailySong.title.split(',').map(t => t.trim()).filter(Boolean)[0] || dailySong.title; const safeArtist = dailySong.artist.split(',').map(a => a.trim()).filter(Boolean)[0] || dailySong.artist; setAttempt(saved.attempt - 1); setGameStatus(saved.status); setHistory(saved.history); setFeedback({ title: true, artist: true }); setGuessTitle(safeTitle); setGuessArtist(safeArtist); setPartialPointsEarned(saved.partialPoints || 0); }
     }
     setView('playing');
   };
@@ -832,8 +836,8 @@ const GameAppInner: React.FC = () => {
     if (!currentSong || gameStatus !== 'playing') return;
     const combinedGuess = sanitizeGuessForCheck(`${guessTitle} ${guessArtist}`);
     if (!combinedGuess && !feedback.title && !feedback.artist) { handleSkip(); return; }
-    const dbTitles = currentSong.title.split(',').map(t => t.trim());
-    const dbArtists = currentSong.artist.split(',').map(a => a.trim());
+    const dbTitles = currentSong.title.split(',').map(t => t.trim()).filter(Boolean);
+    const dbArtists = currentSong.artist.split(',').map(a => a.trim()).filter(Boolean);
     let isTitleNowCorrect = !!feedback.title; let isArtistNowCorrect = !!feedback.artist; let newPartialPoints = partialPointsEarned;
     if (isTitleOnlyMode) isArtistNowCorrect = true;
     if (!isTitleNowCorrect) { isTitleNowCorrect = dbTitles.some(t => normalizeText(combinedGuess).includes(normalizeText(t)) || isFuzzyMatch(combinedGuess, [t])); if (isTitleNowCorrect && !feedback.title) newPartialPoints += 30; }

@@ -8,65 +8,64 @@ export interface SongSuggestion {
 
 let songsCache: { title: string; artist: string }[] | null = null;
 let loadingPromise: Promise<void> | null = null;
+let lastLoadTime = 0;
+const CACHE_TTL = 30 * 60 * 1000; // 30 minutes cache
 
 function normalizeForSearch(text: string): string {
   return text.toLowerCase().replace(/ą/g, 'a').replace(/ć/g, 'c').replace(/ę/g, 'e').replace(/ł/g, 'l').replace(/ń/g, 'n').replace(/ó/g, 'o').replace(/ś/g, 's').replace(/ź/g, 'z').replace(/ż/g, 'z').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9\s]/g, '').trim();
 }
 
 async function loadSongs(): Promise<void> {
-  if (songsCache) return;
+  // Use cache if fresh
+  if (songsCache && Date.now() - lastLoadTime < CACHE_TTL) return;
   if (loadingPromise) { await loadingPromise; return; }
   loadingPromise = (async () => {
     try {
-      let allData: { title: string; artist: string }[] = [];
+      const existing = new Set<string>();
+      const allData: { title: string; artist: string }[] = [];
+
+      const addUnique = (items: any[]) => {
+        items.forEach((item: any) => {
+          const key = `${item.title}|${item.artist || ''}`.toLowerCase();
+          if (item.title && !existing.has(key)) { allData.push({ title: item.title, artist: item.artist || '' }); existing.add(key); }
+        });
+      };
+
+      // 1. song_suggestions - main table (paginated)
       let from = 0;
       const batchSize = 1000;
       while (true) {
-        const { data: batch, error: batchErr } = await supabase.from('song_suggestions').select('title, artist').range(from, from + batchSize - 1).order('artist');
-        if (batchErr || !batch || batch.length === 0) break;
-        allData = allData.concat(batch);
+        const { data: batch } = await supabase.from('song_suggestions').select('title, artist').range(from, from + batchSize - 1);
+        if (!batch || batch.length === 0) break;
+        addUnique(batch);
         if (batch.length < batchSize) break;
         from += batchSize;
       }
-      // Add from community_event_songs (active events)
+
+      // 2. Piosenki (daily/piano/beat/reverse) - EXCLUDE Bajki/Gry to avoid mixing with dedicated suggestions
       try {
-        const { data: activeEvIds } = await supabase.from('community_events').select('id').eq('status', 'active');
-        if (activeEvIds && activeEvIds.length > 0) {
-          const ids = activeEvIds.map((e: any) => e.id);
-          const { data: communityData } = await supabase.from('community_event_songs').select('title, artist').in('event_id', ids);
-          if (communityData) {
-            const existing = new Set(allData.map(d => `${d.title}|${d.artist}`.toLowerCase()));
-            communityData.forEach((cd: any) => {
-              const key = `${cd.title}|${cd.artist || ''}`.toLowerCase();
-              if (cd.title && !existing.has(key)) { allData.push({ title: cd.title, artist: cd.artist || '' }); existing.add(key); }
-            });
-          }
+        const { data } = await supabase.from('Piosenki').select('*');
+        if (data) addUnique(data.filter((p: any) => {
+          const cat = (p.category || '').toString().trim().toLowerCase();
+          return cat !== 'bajki' && cat !== 'bajka' && cat !== 'cartoons' && cat !== 'filmy' && cat !== 'movies' && cat !== 'gry' && cat !== 'gra' && cat !== 'games' && cat !== 'game';
+        }).map((p: any) => ({ title: p.title, artist: p.artist || '' })));
+      } catch {}
+
+      // 3. event_songs (twórcy events) - usually small
+      try { const { data } = await supabase.from('event_songs').select('title, artist'); if (data) addUnique(data); } catch {}
+
+      // 4. community_event_songs (only active) - load IDs first (small), then songs
+      try {
+        const { data: ids } = await supabase.from('community_events').select('id').eq('status', 'active');
+        if (ids && ids.length > 0) {
+          const { data } = await supabase.from('community_event_songs').select('title, artist').in('event_id', ids.map((e: any) => e.id));
+          if (data) addUnique(data);
         }
       } catch {}
-      // Add from Piosenki (daily songs, piano, beat, reverse)
-      try {
-        const { data: piosenki } = await supabase.from('Piosenki').select('title, artist');
-        if (piosenki) {
-          const existing = new Set(allData.map(d => `${d.title}|${d.artist}`.toLowerCase()));
-          piosenki.forEach((p: any) => {
-            const key = `${p.title}|${p.artist || ''}`.toLowerCase();
-            if (p.title && !existing.has(key)) { allData.push({ title: p.title, artist: p.artist || '' }); existing.add(key); }
-          });
-        }
-      } catch {}
-      // Add from event_songs (twórcy events)
-      try {
-        const { data: evSongs } = await supabase.from('event_songs').select('title, artist');
-        if (evSongs) {
-          const existing = new Set(allData.map(d => `${d.title}|${d.artist}`.toLowerCase()));
-          evSongs.forEach((es: any) => {
-            const key = `${es.title}|${es.artist || ''}`.toLowerCase();
-            if (es.title && !existing.has(key)) { allData.push({ title: es.title, artist: es.artist || '' }); existing.add(key); }
-          });
-        }
-      } catch {}
+
       songsCache = allData;
-    } catch (e) { console.error('Error loading songs:', e); songsCache = []; }
+      lastLoadTime = Date.now();
+    } catch (e) { console.error('Error loading songs:', e); if (!songsCache) songsCache = []; }
   })();
   await loadingPromise;
   loadingPromise = null;
@@ -94,4 +93,7 @@ export async function searchSongSuggestions(query: string): Promise<SongSuggesti
   return results.filter(r => { const key = `${r.title}|${r.artist}`.toLowerCase(); if (seen.has(key)) return false; seen.add(key); return true; }).slice(0, 15);
 }
 
-export function preloadSongSuggestions(): void { loadSongs(); }
+// DON'T preload on startup - load lazily when user starts typing
+export function preloadSongSuggestions(): void {
+  // No-op: load on first search instead of on page load
+}
