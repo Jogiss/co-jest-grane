@@ -526,7 +526,7 @@ const GameAppInner: React.FC = () => {
   useEffect(() => {
     if (view === 'result') { stopMusic(); playResultAudio(); setTimeout(() => checkNewAchievements(), 1500); setNavCooldown(true); setTimeout(() => setNavCooldown(false), 1500); }
     if (view !== 'result' && view !== 'playing') { stopMusic(); audioEngine.stopAll(); stopResultPlayer(); resultBufferRef.current = null; setResultCurrentTime(0); setResultDuration(0); }
-    if (view === 'menu') { stopMusic(); stopResultPlayer(); destroyYtPlayer(); audioEngine.stopAll(); }
+    if (view === 'menu') { stopMusic(); stopResultPlayer(); destroyYtPlayer(); audioEngine.stopAll(); clearEventState(); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
 
@@ -583,7 +583,8 @@ const GameAppInner: React.FC = () => {
     }
   };
 
-  const exitToMenu = () => { stopMusic(); stopResultPlayer(); destroyYtPlayer(); audioEngine.playUiClick(); setActiveEventSlug(null); setView('menu'); };
+  const clearEventState = () => { setActiveEventSlug(null); setActiveEventName(''); setActiveEventNum(1); activeEventSongsRef.current = []; };
+  const exitToMenu = () => { stopMusic(); stopResultPlayer(); destroyYtPlayer(); audioEngine.playUiClick(); clearEventState(); setView('menu'); };
   const pendingCommunityEventRef = React.useRef<string | null>(null);
 
   const goToCalendar = () => {
@@ -591,11 +592,11 @@ const GameAppInner: React.FC = () => {
     if (activeEventSlug?.startsWith('community-')) {
       const communityId = activeEventSlug.replace('community-', '');
       pendingCommunityEventRef.current = communityId;
-      setActiveEventSlug(null);
+      clearEventState();
       setView('menu');
       setShowCommunity(true);
     }
-    else if (activeEventSlug) { setView('menu'); setShowEvents(true); }
+    else if (activeEventSlug) { clearEventState(); setView('menu'); setShowEvents(true); }
     else setView('calendar');
   };
 
@@ -681,7 +682,7 @@ const GameAppInner: React.FC = () => {
   const effectiveCategory = activeEventSlug ? (currentSong?.category || currentCategory) : currentCategory;
   const isTitleOnlyMode = gameMode === 'klasyczny' && (effectiveCategory === 'Bajki' || effectiveCategory === 'Gry');
 
-  // Search event songs locally for suggestions (community events)
+  // Search event songs locally for suggestions — sorted ALPHABETICALLY to prevent spoiling event order
   const searchEventSongsLocal = (query: string, cat: string): { movies: MovieSuggestion[], games: GameSuggestion[], songs: SongSuggestion[] } => {
     const q = query.toLowerCase().trim();
     if (q.length < 2) return { movies: [], games: [], songs: [] };
@@ -691,7 +692,7 @@ const GameAppInner: React.FC = () => {
       const title = (s.title || '').toLowerCase();
       const artist = (s.artist || '').toLowerCase();
       return title.includes(q) || artist.includes(q) || q.split(' ').some((w: string) => w.length > 2 && (title.includes(w) || artist.includes(w)));
-    });
+    }).sort((a: any, b: any) => (a.title || '').localeCompare(b.title || ''));
     if (cat === 'Bajki') return { movies: matched.map((s: any) => ({ title: s.title })), games: [], songs: [] };
     if (cat === 'Gry') return { movies: [], games: matched.map((s: any) => ({ title: s.title })), songs: [] };
     return { movies: [], games: [], songs: matched.map((s: any) => ({ title: s.title, artist: s.artist || '' })) };
@@ -810,7 +811,7 @@ const GameAppInner: React.FC = () => {
 
   const startDailyGame = (date: string) => {
     if (navCooldown) return; setNavCooldown(true); setTimeout(() => setNavCooldown(false), 800);
-    setActiveEventSlug(null);
+    clearEventState();
     stopMusic(); stopResultPlayer(); destroyYtPlayer(); audioEngine.stopAll(); setGameStatus('playing'); setAttempt(0); setHistory([]); setGuessTitle(''); setGuessArtist(''); setFeedback({ title: false, artist: false }); setPartialPointsEarned(0); setCloseHint({ show: false, type: null }); setShowSuggestions(false); setSpotifySuggestions([]); setErrorMessage(null);
     const dailySong = songs.find(s => (s.date === date || (!s.date && date === new Date().toISOString().split('T')[0])) && s.category === currentCategory && s.mode === gameMode);
     if (!dailySong) return;
@@ -884,7 +885,7 @@ const GameAppInner: React.FC = () => {
   const handleModeClick = (modeId: GameMode) => { if (expandedMode === modeId) setExpandedMode(null); else { setExpandedMode(modeId); audioEngine.playUiClick(); } };
 
   const handleCategoryClick = (modeId: GameMode, cat: Category) => {
-    stopMusic(); setGameMode(modeId); setCurrentCategory(cat); audioEngine.playUiClick();
+    stopMusic(); clearEventState(); setGameMode(modeId); setCurrentCategory(cat); audioEngine.playUiClick();
     if (modeId === 'klasyczny') {
       const now = new Date(); const offset = now.getTimezoneOffset();
       const localToday = new Date(now.getTime() - (offset * 60 * 1000)).toISOString().split('T')[0];
