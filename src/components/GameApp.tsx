@@ -91,7 +91,10 @@ const GameAppInner: React.FC = () => {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [movieSuggestions, setMovieSuggestions] = useState<MovieSuggestion[]>([]);
   const [gameSuggestions, setGameSuggestions] = useState<GameSuggestion[]>([]);
+  const [countrySuggestions, setCountrySuggestions] = useState<string[]>([]);
   const [expandedMode, setExpandedMode] = useState<GameMode | null>(null);
+
+  const ALL_COUNTRIES = ['Afganistan','Albania','Algieria','Andora','Angola','Antigua i Barbuda','Arabia Saudyjska','Argentyna','Armenia','Australia','Austria','Azerbejdżan','Bahamy','Bahrajn','Bangladesz','Barbados','Belgia','Belize','Benin','Bhutan','Białoruś','Boliwia','Bośnia i Hercegowina','Botswana','Brazylia','Brunei','Bułgaria','Burkina Faso','Burundi','Chile','Chiny','Chorwacja','Cypr','Czad','Czarnogóra','Czechy','Dania','Demokratyczna Republika Konga','Dominika','Dominikana','Dżibuti','Egipt','Ekwador','Erytrea','Estonia','Eswatini','Etiopia','Fidżi','Filipiny','Finlandia','Francja','Gabon','Gambia','Ghana','Grecja','Grenada','Gruzja','Gujana','Gwatemala','Gwinea','Gwinea Bissau','Haiti','Hiszpania','Holandia','Honduras','Indie','Indonezja','Irak','Iran','Irlandia','Islandia','Izrael','Jamajka','Japonia','Jemen','Jordania','Kambodża','Kamerun','Kanada','Katar','Kazachstan','Kenia','Kirgistan','Kiribati','Kolumbia','Komory','Kongo','Korea Południowa','Korea Północna','Kostaryka','Kuba','Kuwejt','Laos','Lesotho','Liban','Liberia','Libia','Liechtenstein','Litwa','Luksemburg','Łotwa','Macedonia Północna','Madagaskar','Malawi','Malediwy','Malezja','Mali','Malta','Maroko','Mauretania','Mauritius','Meksyk','Mikronezja','Mjanma','Mołdawia','Monako','Mongolia','Mozambik','Namibia','Nauru','Nepal','Niemcy','Niger','Nigeria','Nikaragua','Norwegia','Nowa Zelandia','Oman','Pakistan','Palau','Panama','Papua-Nowa Gwinea','Paragwaj','Peru','Polska','Portugalia','Republika Południowej Afryki','Republika Środkowoafrykańska','Rosja','Ruanda','Rumunia','Saint Kitts i Nevis','Saint Lucia','Saint Vincent i Grenadyny','Salwador','Samoa','San Marino','Senegal','Serbia','Seszele','Sierra Leone','Singapur','Słowacja','Słowenia','Somalia','Sri Lanka','Stany Zjednoczone','Sudan','Sudan Południowy','Surinam','Syria','Szwajcaria','Szwecja','Tadżykistan','Tajlandia','Tanzania','Timor Wschodni','Togo','Tonga','Trynidad i Tobago','Tunezja','Turcja','Turkmenistan','Tuvalu','Uganda','Ukraina','Urugwaj','Uzbekistan','Vanuatu','Watykan','Wenezuela','Węgry','Wielka Brytania','Wietnam','Włochy','Wybrzeże Kości Słoniowej','Wyspy Marshalla','Wyspy Salomona','Zambia','Zimbabwe','Zjednoczone Emiraty Arabskie'];
 
   const themeConfig: Record<Theme, { primary: string; text: string; border: string; shadow: string; gradient: string; hover: string }> = {
     indigo: { primary: 'bg-indigo-600', text: 'text-indigo-400', border: 'border-indigo-500', shadow: 'shadow-indigo-500/20', gradient: 'from-indigo-950', hover: 'hover:bg-indigo-500' },
@@ -680,7 +683,7 @@ const GameAppInner: React.FC = () => {
   };
 
   const effectiveCategory = activeEventSlug ? (currentSong?.category || currentCategory) : currentCategory;
-  const isTitleOnlyMode = gameMode === 'klasyczny' && (effectiveCategory === 'Bajki' || effectiveCategory === 'Gry');
+  const isTitleOnlyMode = gameMode === 'klasyczny' && (effectiveCategory === 'Bajki' || effectiveCategory === 'Gry' || effectiveCategory === 'Inne' || effectiveCategory === 'Kraj');
 
   // Search event songs locally for suggestions — sorted ALPHABETICALLY to prevent spoiling event order
   const searchEventSongsLocal = (query: string, cat: string): { movies: MovieSuggestion[], games: GameSuggestion[], songs: SongSuggestion[] } => {
@@ -701,15 +704,23 @@ const GameAppInner: React.FC = () => {
   const handleGuessInput = (value: string) => {
     const cleaned = value.replace(/[,;|\/\\&]/g, '').slice(0, MAX_GUESS_LENGTH);
     setGuessTitle(cleaned);
-    setSpotifySuggestions([]); setMovieSuggestions([]); setGameSuggestions([]);
+    setSpotifySuggestions([]); setMovieSuggestions([]); setGameSuggestions([]); setCountrySuggestions([]);
+    const effectiveCat = activeEventSlug ? (currentSong?.category || currentCategory) : currentCategory;
+
+    // Kraj — show all countries immediately, filter by input
+    if (effectiveCat === 'Kraj') {
+      const q = cleaned.trim().toLowerCase();
+      const filtered = q.length === 0 ? ALL_COUNTRIES : ALL_COUNTRIES.filter(c => c.toLowerCase().includes(q));
+      setCountrySuggestions(filtered.slice(0, 20));
+      setShowSuggestions(filtered.length > 0);
+      return;
+    }
+
     if (cleaned.trim().length >= 2) {
-      const effectiveCat = activeEventSlug ? (currentSong?.category || currentCategory) : currentCategory;
-      // Get event song suggestions first
       const evResults = activeEventSlug ? searchEventSongsLocal(cleaned, effectiveCat) : { movies: [], games: [], songs: [] };
 
       if (effectiveCat === 'Bajki') {
         searchMoviesDebounced(cleaned, (results: MovieSuggestion[]) => {
-          // Merge event songs + bajki suggestions, deduplicate
           const combined = [...evResults.movies];
           const existingTitles = new Set(combined.map(m => m.title.toLowerCase()));
           results.forEach(r => { if (!existingTitles.has(r.title.toLowerCase())) combined.push(r); });
@@ -727,6 +738,21 @@ const GameAppInner: React.FC = () => {
         });
         searchGamesDebounced(cleaned, (rawgResults: GameSuggestion[]) => { if (rawgResults.length > 0) { setGameSuggestions(prev => { const existingTitles = new Set(prev.map(g => g.title.toLowerCase())); const unique = rawgResults.filter(g => !existingTitles.has(g.title.toLowerCase())); return [...prev, ...unique]; }); setShowSuggestions(true); } });
       }
+      else if (effectiveCat === 'Inne') {
+        // Inne — event songs + global song suggestions
+        if (cleaned.trim().length >= 3) {
+          searchSongsDebounced(cleaned, (results: SongSuggestion[]) => {
+            const combined = [...evResults.songs];
+            const existingKeys = new Set(combined.map(s => `${s.title}|${s.artist}`.toLowerCase()));
+            results.forEach(r => { if (!existingKeys.has(`${r.title}|${r.artist}`.toLowerCase())) combined.push(r); });
+            setSpotifySuggestions(combined);
+            setShowSuggestions(combined.length > 0);
+          });
+        } else {
+          setSpotifySuggestions(evResults.songs);
+          setShowSuggestions(evResults.songs.length > 0);
+        }
+      }
       else if (cleaned.trim().length >= 3) {
         searchSongsDebounced(cleaned, (results: SongSuggestion[]) => {
           const combined = [...evResults.songs];
@@ -736,8 +762,13 @@ const GameAppInner: React.FC = () => {
           setShowSuggestions(combined.length > 0);
         });
       }
-      else setShowSuggestions(false);
-    } else setShowSuggestions(false);
+      else {
+        setSpotifySuggestions(evResults.songs);
+        setShowSuggestions(evResults.songs.length > 0);
+      }
+    } else {
+      setShowSuggestions(false);
+    }
   };
 
   const selectSuggestion = (suggestion: SongSuggestion) => { setGuessTitle(`${suggestion.title} ${suggestion.artist}`.slice(0, MAX_GUESS_LENGTH)); setShowSuggestions(false); setSpotifySuggestions([]); };
@@ -783,6 +814,8 @@ const GameAppInner: React.FC = () => {
     if (rawCat === 'zagraniczne' || rawCat === 'foreign') cat = 'Zagraniczne';
     else if (rawCat === 'bajka' || rawCat === 'bajki' || rawCat === 'cartoon') cat = 'Bajki';
     else if (rawCat === 'gra' || rawCat === 'gry' || rawCat === 'game') cat = 'Gry';
+    else if (rawCat === 'inne' || rawCat === 'other') cat = 'Inne';
+    else if (rawCat === 'kraj' || rawCat === 'country') cat = 'Kraj';
     setCurrentCategory(cat);
     setGameMode('klasyczny');
     const song: Song = {
@@ -979,7 +1012,7 @@ const GameAppInner: React.FC = () => {
                   sorted = [...csongs].sort((a: any, b: any) => (a.date || a.id).toString().localeCompare((b.date || b.id).toString()));
                 }
                 // Inject event category into each song so startEventGame knows the category
-                const eventCat = communityEvent.category === 'cartoon' ? 'bajki' : communityEvent.category === 'game' ? 'gry' : communityEvent.category === 'music' ? 'muzyka' : communityEvent.category;
+                const eventCat = communityEvent.category === 'cartoon' ? 'bajki' : communityEvent.category === 'game' ? 'gry' : communityEvent.category === 'music' ? 'muzyka' : communityEvent.category === 'other' ? 'inne' : communityEvent.category === 'country' ? 'kraj' : communityEvent.category;
                 const songsWithCat = sorted.map((s: any) => ({ ...s, category: s.category || eventCat }));
                 setEventSongs(songsWithCat);
                 activeEventSongsRef.current = songsWithCat;
@@ -1481,8 +1514,8 @@ const GameAppInner: React.FC = () => {
                           {!isTitleOnlyMode && <div className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest ${feedback.artist ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-white/5 text-white/20 border border-white/5'}`}>{feedback.artist && <CheckCircle size={12} />}Wykonawca</div>}
                         </div>
                         <div className="bg-white/5 border-2 rounded-2xl transition-all p-1 border-white/10 focus-within:border-white/30">
-                          <div className="flex items-center px-4 py-3"><input type="text" placeholder={isTitleOnlyMode ? (currentCategory === 'Gry' ? "🎮 Wpisz nazwę gry..." : "🎬 Wpisz nazwę bajki/filmu...") : "🎵 Wpisz tytuł i wykonawcę..."} value={guessTitle} onChange={(e) => handleGuessInput(e.target.value)} onKeyDown={(e) => { handleKeyDown(e); if (e.key === 'Enter') setShowSuggestions(false); }} onFocus={() => { if (spotifySuggestions.length > 0 || movieSuggestions.length > 0 || gameSuggestions.length > 0) setShowSuggestions(true); }} onBlur={() => setTimeout(() => setShowSuggestions(false), 200)} disabled={feedback.title && feedback.artist} maxLength={MAX_GUESS_LENGTH} className="w-full bg-transparent outline-none text-lg font-bold text-white placeholder:text-white/20" /></div>
-                          {showSuggestions && spotifySuggestions.length > 0 && gameStatus === 'playing' && effectiveCategory !== 'Bajki' && effectiveCategory !== 'Gry' && (
+                          <div className="flex items-center px-4 py-3"><input type="text" placeholder={isTitleOnlyMode ? (effectiveCategory === 'Gry' ? "🎮 Wpisz nazwę gry..." : effectiveCategory === 'Kraj' ? "🌍 Wpisz nazwę kraju..." : effectiveCategory === 'Inne' ? "🌟 Wpisz odpowiedź..." : "🎬 Wpisz nazwę bajki/filmu...") : "🎵 Wpisz tytuł i wykonawcę..."} value={guessTitle} onChange={(e) => handleGuessInput(e.target.value)} onKeyDown={(e) => { handleKeyDown(e); if (e.key === 'Enter') setShowSuggestions(false); }} onFocus={() => { if (effectiveCategory === 'Kraj') { handleGuessInput(guessTitle); } else if (spotifySuggestions.length > 0 || movieSuggestions.length > 0 || gameSuggestions.length > 0 || countrySuggestions.length > 0) setShowSuggestions(true); }} onBlur={() => setTimeout(() => setShowSuggestions(false), 200)} disabled={feedback.title && feedback.artist} maxLength={MAX_GUESS_LENGTH} className="w-full bg-transparent outline-none text-lg font-bold text-white placeholder:text-white/20" /></div>
+                          {showSuggestions && spotifySuggestions.length > 0 && gameStatus === 'playing' && effectiveCategory !== 'Bajki' && effectiveCategory !== 'Gry' && effectiveCategory !== 'Kraj' && (
                             <div className="mx-2 mb-1 bg-slate-800 border border-white/10 rounded-xl overflow-hidden max-h-56 overflow-y-auto">{spotifySuggestions.map((s, i) => (<button key={i} onClick={() => selectSuggestion(s)} className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/10 transition-all text-left border-b border-white/5 last:border-0"><div className="min-w-0"><p className="text-white text-xs font-bold truncate">{s.title}</p><p className="text-white/40 text-[10px] truncate">{s.artist}</p></div></button>))}</div>
                           )}
                           {showSuggestions && movieSuggestions.length > 0 && gameStatus === 'playing' && effectiveCategory === 'Bajki' && (
@@ -1490,6 +1523,9 @@ const GameAppInner: React.FC = () => {
                           )}
                           {showSuggestions && gameSuggestions.length > 0 && gameStatus === 'playing' && effectiveCategory === 'Gry' && (
                             <div className="mx-2 mb-1 bg-slate-800 border border-white/10 rounded-xl overflow-hidden max-h-56 overflow-y-auto">{gameSuggestions.map((s, i) => (<button key={i} onClick={() => selectGameSuggestion(s)} className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/10 transition-all text-left border-b border-white/5 last:border-0"><div className="min-w-0 flex-1"><p className="text-white text-xs font-bold truncate">{s.title}</p></div></button>))}</div>
+                          )}
+                          {showSuggestions && countrySuggestions.length > 0 && gameStatus === 'playing' && effectiveCategory === 'Kraj' && (
+                            <div className="mx-2 mb-1 bg-slate-800 border border-white/10 rounded-xl overflow-hidden max-h-56 overflow-y-auto"><div className="px-3 py-2 border-b border-white/5 text-[10px] uppercase tracking-widest font-bold text-white/30">🌍 Kraje</div>{countrySuggestions.map((c, i) => (<button key={i} onClick={() => { setGuessTitle(c); setShowSuggestions(false); setCountrySuggestions([]); }} className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/10 transition-all text-left border-b border-white/5 last:border-0"><div className="min-w-0"><p className="text-white text-xs font-bold truncate">🏳️ {c}</p></div></button>))}</div>
                           )}
                         </div>
                         {gameStatus === 'playing' ? (<div className="flex gap-3"><button onClick={handleSkip} className="flex-1 bg-white/10 hover:bg-white/20 text-white py-5 rounded-2xl font-black text-xl transition-all border border-white/10">SKIP</button><button onClick={handleGuess} disabled={!guessTitle || (feedback.title && feedback.artist)} className={`flex-[2] py-5 rounded-2xl font-black text-xl shadow-xl transition-all ${currentTheme.primary} ${currentTheme.hover} text-white disabled:opacity-30`}>SPRAWDŹ ({attempt + 1}/6)</button></div>) : (<button onClick={() => setView('result')} className="w-full py-5 rounded-2xl font-black text-xl shadow-xl transition-all bg-white text-slate-950 hover:scale-105 active:scale-95">ZOBACZ WYNIK</button>)}

@@ -1,4 +1,4 @@
-export type Category = 'Polskie' | 'Zagraniczne' | 'Bajki' | 'Gry';
+export type Category = 'Polskie' | 'Zagraniczne' | 'Bajki' | 'Gry' | 'Inne' | 'Kraj';
 export type GameMode = 'klasyczny' | 'piano' | 'beat' | 'reverse';
 
 export interface Song {
