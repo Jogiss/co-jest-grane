@@ -711,7 +711,7 @@ const GameAppInner: React.FC = () => {
     if (effectiveCat === 'Kraj') {
       const q = cleaned.trim().toLowerCase();
       const filtered = q.length === 0 ? ALL_COUNTRIES : ALL_COUNTRIES.filter(c => c.toLowerCase().includes(q));
-      setCountrySuggestions(filtered.slice(0, 20));
+      setCountrySuggestions(filtered);
       setShowSuggestions(filtered.length > 0);
       return;
     }

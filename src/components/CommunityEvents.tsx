@@ -8,6 +8,7 @@ import {
   TrendingUp, Clock, Link2, ThumbsUp, ThumbsDown, Pencil, Save
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { COUNTRIES } from '../data/countries';
 
 type EventCategory = 'music' | 'cartoon' | 'game' | 'other' | 'country';
 type EventStatus = 'pending_review' | 'approved' | 'rejected' | 'active' | 'archived';
@@ -83,6 +84,7 @@ const CommunityEvents: React.FC<CommunityEventsProps> = ({ isOpen, onClose, user
   const [existingSongsCount, setExistingSongsCount] = useState(0);
   const [existingSongsList, setExistingSongsList] = useState<CommunityEventSong[]>([]);
   const [showExistingSongs, setShowExistingSongs] = useState(false);
+  const [countryDropdownIndex, setCountryDropdownIndex] = useState<number | null>(null);
 
   const fetchActiveEvents = useCallback(async () => { 
     try { 
@@ -296,7 +298,54 @@ const CommunityEvents: React.FC<CommunityEventsProps> = ({ isOpen, onClose, user
           {view === 'create_step1' && (<div className="space-y-6"><div className="text-center"><span className="text-4xl mb-2 block">✨</span><h2 className="text-3xl font-black text-white">STWÓRZ EVENT</h2><p className="text-white/40 text-sm mt-1">Krok 1/2 — Informacje</p></div><div className="space-y-4"><div><label className="text-white/40 text-[10px] font-bold uppercase tracking-widest block mb-2">Tytuł *</label><input type="text" value={formTitle} onChange={(e) => setFormTitle(e.target.value.slice(0, 50))} placeholder="np. Hity lat 90." maxLength={50} className="w-full bg-white/5 border border-white/10 rounded-xl py-3 px-4 text-white placeholder:text-white/20 focus:border-white/30 focus:outline-none" /><p className="text-white/20 text-[9px] mt-1 text-right">{formTitle.length}/50</p></div><div><label className="text-white/40 text-[10px] font-bold uppercase tracking-widest block mb-2">Opis</label><textarea value={formDesc} onChange={(e) => setFormDesc(e.target.value.slice(0, 200))} placeholder="Krótki opis..." maxLength={200} rows={3} className="w-full bg-white/5 border border-white/10 rounded-xl py-3 px-4 text-white placeholder:text-white/20 focus:border-white/30 focus:outline-none resize-none" /><p className="text-white/20 text-[9px] mt-1 text-right">{formDesc.length}/200</p></div><div><label className="text-white/40 text-[10px] font-bold uppercase tracking-widest block mb-2">Kategoria *</label><div className="grid grid-cols-2 sm:grid-cols-4 gap-2">{(Object.entries(CATEGORY_LABELS) as [EventCategory, { label: string; emoji: string }][]).map(([key, val]) => (<button key={key} onClick={() => setFormCategory(key)} className={`p-3 rounded-xl border text-center transition-all ${formCategory === key ? `${theme.primary} border-white/20 text-white` : 'bg-white/5 border-white/10 text-white/50 hover:bg-white/10'}`}><span className="text-xl block mb-1">{val.emoji}</span><span className="text-xs font-bold">{val.label}</span></button>))}</div></div></div><button onClick={() => { if (validateStep1()) setView('create_step2'); }} className={`w-full ${theme.primary} ${theme.hover} text-white py-4 rounded-2xl font-black text-lg transition-all flex items-center justify-center gap-2`}>DALEJ <ChevronRight size={20} /></button></div>)}
 
           {/* CREATE STEP 2 */}
-          {view === 'create_step2' && (<div className="space-y-6"><div className="text-center"><span className="text-4xl mb-2 block">🎵</span><h2 className="text-3xl font-black text-white">DODAJ PIOSENKI</h2><p className="text-white/40 text-sm mt-1">Krok 2/2 — Min. 5, max. 31</p></div><div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">{formSongs.map((song, idx) => (<div key={idx} className="bg-white/[0.03] border border-white/10 rounded-2xl p-4 space-y-3"><div className="flex items-center justify-between"><span className="text-white font-black text-sm">#{idx + 1}</span>{formSongs.length > 1 && <button onClick={() => removeSong(idx)} className="text-red-400/50 hover:text-red-400"><Trash2 size={14} /></button>}</div><div className={`grid grid-cols-1 ${formCategory === 'music' ? 'sm:grid-cols-2' : ''} gap-3`}><input type="text" value={song.title} onChange={(e) => updateSong(idx, 'title', e.target.value.slice(0, 100))} placeholder={formCategory === 'music' ? "Tytuł piosenki *" : formCategory === 'cartoon' ? "Nazwa bajki *" : formCategory === 'game' ? "Nazwa gry *" : "Tytuł *"} className="bg-white/5 border border-white/10 rounded-lg py-2.5 px-3 text-white text-sm placeholder:text-white/20 focus:border-white/30 focus:outline-none" />{formCategory === 'music' && <input type="text" value={song.artist} onChange={(e) => updateSong(idx, 'artist', e.target.value.slice(0, 100))} placeholder="Wykonawca * (wielu po przecinku)" className="bg-white/5 border border-white/10 rounded-lg py-2.5 px-3 text-white text-sm placeholder:text-white/20 focus:border-white/30 focus:outline-none" />}</div><div className="grid grid-cols-1 sm:grid-cols-3 gap-3"><input type="text" value={song.youtube_url} onChange={(e) => updateSong(idx, 'youtube_url', e.target.value)} placeholder="Link YouTube *" className={`sm:col-span-2 bg-white/5 border rounded-lg py-2.5 px-3 text-white text-sm placeholder:text-white/20 focus:outline-none ${song.youtube_url && !isValidYouTubeUrl(song.youtube_url) ? 'border-red-500/50' : 'border-white/10'}`} /><div><input type="number" value={song.start_time_seconds} onChange={(e) => updateSong(idx, 'start_time_seconds', Math.max(0, parseInt(e.target.value) || 0))} placeholder="Sekunda" className="w-full bg-white/5 border border-white/10 rounded-lg py-2.5 px-3 text-white text-sm placeholder:text-white/20 focus:border-white/30 focus:outline-none" min={0} /><p className="text-white/15 text-[8px] mt-0.5">Sekunda od której leci fragment</p></div></div><input type="date" value={song.date} onChange={(e) => updateSong(idx, 'date', e.target.value)} className="bg-white/5 border border-white/10 rounded-lg py-2.5 px-3 text-white text-sm focus:border-white/30 focus:outline-none w-full sm:w-auto" /></div>))}</div><button onClick={addSong} disabled={formSongs.length >= 31} className="w-full bg-white/5 border border-dashed border-white/20 text-white/40 py-3 rounded-xl font-bold text-sm hover:bg-white/10 hover:text-white transition-all flex items-center justify-center gap-2 disabled:opacity-30"><Plus size={16} /> Dodaj ({formSongs.length}/31)</button><button onClick={submitEvent} disabled={loading || formSongs.length < 5} className={`w-full ${theme.primary} ${theme.hover} text-white py-4 rounded-2xl font-black text-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50`}>{loading ? <Loader2 size={20} className="animate-spin" /> : <Send size={20} />}{loading ? 'WYSYŁANIE...' : 'ZGŁOŚ DO WERYFIKACJI'}</button>{error && <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 flex items-center gap-2"><AlertCircle size={16} className="text-red-500 shrink-0" /><p className="text-red-400 text-sm">{error}</p></div>}</div>)}
+          {view === 'create_step2' && (
+            <div className="space-y-6">
+              <div className="text-center"><span className="text-4xl mb-2 block">🎵</span><h2 className="text-3xl font-black text-white">DODAJ PIOSENKI</h2><p className="text-white/40 text-sm mt-1">Krok 2/2 — Min. 5, max. 31</p></div>
+              <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
+                {formSongs.map((song, idx) => (
+                  <div key={idx} className="bg-white/[0.03] border border-white/10 rounded-2xl p-4 space-y-3">
+                    <div className="flex items-center justify-between"><span className="text-white font-black text-sm">#{idx + 1}</span>{formSongs.length > 1 && <button onClick={() => removeSong(idx)} className="text-red-400/50 hover:text-red-400"><Trash2 size={14} /></button>}</div>
+                    <div className={`grid grid-cols-1 ${formCategory === 'music' ? 'sm:grid-cols-2' : ''} gap-3`}>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={song.title}
+                          onChange={(e) => { updateSong(idx, 'title', e.target.value.slice(0, 100)); if (formCategory === 'country') setCountryDropdownIndex(idx); }}
+                          onFocus={() => { if (formCategory === 'country') setCountryDropdownIndex(idx); }}
+                          onBlur={() => setTimeout(() => setCountryDropdownIndex(null), 150)}
+                          placeholder={formCategory === 'music' ? 'Tytuł piosenki *' : formCategory === 'cartoon' ? 'Nazwa bajki *' : formCategory === 'game' ? 'Nazwa gry *' : formCategory === 'country' ? 'Kraj *' : 'Tytuł *'}
+                          className="w-full bg-white/5 border border-white/10 rounded-lg py-2.5 px-3 text-white text-sm placeholder:text-white/20 focus:border-white/30 focus:outline-none"
+                        />
+                        {formCategory === 'country' && countryDropdownIndex === idx && (
+                          <div className="absolute z-30 left-0 right-0 top-full mt-1 bg-slate-800 border border-white/10 rounded-xl overflow-hidden max-h-56 overflow-y-auto shadow-2xl">
+                            {(song.title.trim() ? COUNTRIES.filter(c => c.toLowerCase().includes(song.title.trim().toLowerCase())) : COUNTRIES).map((country) => (
+                              <button
+                                key={country}
+                                type="button"
+                                onClick={() => { updateSong(idx, 'title', country); setCountryDropdownIndex(null); }}
+                                className="w-full text-left px-3 py-2 hover:bg-white/10 text-white text-sm border-b border-white/5 last:border-0"
+                              >
+                                🌍 {country}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      {formCategory === 'music' && <input type="text" value={song.artist} onChange={(e) => updateSong(idx, 'artist', e.target.value.slice(0, 100))} placeholder="Wykonawca * (wielu po przecinku)" className="bg-white/5 border border-white/10 rounded-lg py-2.5 px-3 text-white text-sm placeholder:text-white/20 focus:border-white/30 focus:outline-none" />}
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <input type="text" value={song.youtube_url} onChange={(e) => updateSong(idx, 'youtube_url', e.target.value)} placeholder="Link YouTube *" className={`sm:col-span-2 bg-white/5 border rounded-lg py-2.5 px-3 text-white text-sm placeholder:text-white/20 focus:outline-none ${song.youtube_url && !isValidYouTubeUrl(song.youtube_url) ? 'border-red-500/50' : 'border-white/10'}`} />
+                      <div><input type="number" value={song.start_time_seconds} onChange={(e) => updateSong(idx, 'start_time_seconds', Math.max(0, parseInt(e.target.value) || 0))} placeholder="Sekunda" className="w-full bg-white/5 border border-white/10 rounded-lg py-2.5 px-3 text-white text-sm placeholder:text-white/20 focus:border-white/30 focus:outline-none" min={0} /><p className="text-white/15 text-[8px] mt-0.5">Sekunda od której leci fragment</p></div>
+                    </div>
+                    <input type="date" value={song.date} onChange={(e) => updateSong(idx, 'date', e.target.value)} className="bg-white/5 border border-white/10 rounded-lg py-2.5 px-3 text-white text-sm focus:border-white/30 focus:outline-none w-full sm:w-auto" />
+                  </div>
+                ))}
+              </div>
+              <button onClick={addSong} disabled={formSongs.length >= 31} className="w-full bg-white/5 border border-dashed border-white/20 text-white/40 py-3 rounded-xl font-bold text-sm hover:bg-white/10 hover:text-white transition-all flex items-center justify-center gap-2 disabled:opacity-30"><Plus size={16} /> Dodaj ({formSongs.length}/31)</button>
+              <button onClick={submitEvent} disabled={loading || formSongs.length < 5} className={`w-full ${theme.primary} ${theme.hover} text-white py-4 rounded-2xl font-black text-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50`}>{loading ? <Loader2 size={20} className="animate-spin" /> : <Send size={20} />}{loading ? 'WYSYŁANIE...' : 'ZGŁOŚ DO WERYFIKACJI'}</button>
+              {error && <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 flex items-center gap-2"><AlertCircle size={16} className="text-red-500 shrink-0" /><p className="text-red-400 text-sm">{error}</p></div>}
+            </div>
+          )}
 
           {/* MY EVENTS */}
           {view === 'my_events' && (<div className="space-y-6"><div className="text-center"><h2 className="text-3xl font-black text-white">MOJE EVENTY</h2></div>{myEvents.length === 0 ? <div className="text-center py-10"><span className="text-4xl mb-2 block">📭</span><p className="text-white/30">Brak eventów</p></div> : <div className="space-y-3">{myEvents.map(ev => (<div key={ev.id} className="bg-white/[0.03] border border-white/10 rounded-2xl p-4"><div className="flex items-center justify-between mb-2"><h3 className="text-white font-bold">{ev.title}</h3><span className={`text-[9px] font-bold px-2.5 py-1 rounded-full border ${STATUS_LABELS[ev.status]?.color}`}>{STATUS_LABELS[ev.status]?.label}</span></div><p className="text-white/40 text-xs">{ev.description}</p><div className="flex items-center gap-3 mt-3"><span className="text-white/20 text-[9px]">{new Date(ev.created_at).toLocaleDateString('pl-PL')}</span>{ev.code && <button onClick={() => copyCode(ev.code)} className="flex items-center gap-1 text-[9px] text-white/30 hover:text-white transition-colors"><Link2 size={10} />{ev.code}</button>}
