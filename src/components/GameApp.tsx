@@ -652,20 +652,19 @@ const GameAppInner: React.FC = () => {
     return matrix[a.length][b.length];
   };
 
-  // EXACT match: guess must match entire target (1 typo allowed, similar length)
+  // ORIGINAL fuzzy match — 1 typo tolerance, guess must cover whole target
   const isFuzzyMatch = (guess: string, targets: string[]): boolean => {
     const normGuess = normalizeText(guess);
     return targets.some(target => {
       const normTarget = normalizeText(target);
       if (normGuess === normTarget) return true;
-      // Must be similar length (not "Shrek" matching "Shrek Trzeci")
-      if (Math.abs(normGuess.length - normTarget.length) > 2) return false;
+      if (normGuess.length < normTarget.length - 1) return false;
       const distance = getLevenshteinDistance(normGuess, normTarget);
       return distance <= 1;
     });
   };
 
-  // CLOSE match: partial match for "BLISKO!" hint
+  // CLOSE match for "BLISKO!" hint — improved with startsWith
   const isCloseMatch = (guess: string, targets: string[]): boolean => {
     const normGuess = normalizeText(guess);
     const guessWords = normGuess.split(' ').filter(w => w.length > 2);
@@ -673,24 +672,23 @@ const GameAppInner: React.FC = () => {
       const normTarget = normalizeText(target);
       const targetWords = normTarget.split(' ').filter(w => w.length > 2);
       if (targetWords.length === 0) return false;
-      // Word-by-word: check if any target word starts with guess word or vice versa
       const matchingWords = targetWords.filter(tWord =>
         guessWords.some(gw =>
           gw === tWord ||
           getLevenshteinDistance(gw, tWord) <= 1 ||
-          (gw.length >= 4 && tWord.startsWith(gw)) ||  // "teletub" → "teletubisie"
-          (tWord.length >= 4 && gw.startsWith(tWord))   // reverse
+          (gw.length >= 4 && tWord.startsWith(gw)) ||
+          (tWord.length >= 4 && gw.startsWith(tWord))
         )
       );
       const matchRatio = matchingWords.length / targetWords.length;
-      if (matchRatio >= 0.5) return true;
-      // Single-word target: check if guess starts with target or vice versa (min 4 chars)
+      if (matchRatio > 0.5 && matchRatio < 1) return true;
+      if (matchRatio >= 1 && targetWords.length < (guessWords.length > 0 ? guessWords.length : 999)) return true;
+      // startsWith for single words: "teletub" → "teletubisie"
       if (normGuess.length >= 4 && normTarget.length >= 4) {
         if (normTarget.startsWith(normGuess) || normGuess.startsWith(normTarget)) return true;
       }
-      // Whole string fuzzy (2-3 typos for longer words)
       const distance = getLevenshteinDistance(normGuess, normTarget);
-      if (distance >= 2 && distance <= Math.max(2, Math.floor(normTarget.length * 0.3))) return true;
+      if (distance >= 2 && distance <= Math.max(2, Math.floor(normTarget.length * 0.25))) return true;
       return false;
     });
   };
@@ -887,31 +885,8 @@ const GameAppInner: React.FC = () => {
     const dbArtists = currentSong.artist.split(',').map(a => a.trim()).filter(Boolean);
     let isTitleNowCorrect = !!feedback.title; let isArtistNowCorrect = !!feedback.artist; let newPartialPoints = partialPointsEarned;
     if (isTitleOnlyMode) isArtistNowCorrect = true;
-    if (!isTitleNowCorrect) {
-      isTitleNowCorrect = dbTitles.some(t => {
-        const nG = normalizeText(combinedGuess), nT = normalizeText(t);
-        if (!nT || nT.length < 2) return false;
-        // Exact or fuzzy match
-        if (isFuzzyMatch(combinedGuess, [t])) return true;
-        // Guess contains target BUT only if guess isn't much longer (prevents "Shrek dwa" matching "Shrek")
-        if (nG.includes(nT) && nG.length <= nT.length * 1.5 + 5) return true;
-        // Target contains guess — only if guess covers most of target
-        if (nT.includes(nG) && nG.length >= nT.length * 0.7) return true;
-        return false;
-      });
-      if (isTitleNowCorrect && !feedback.title) newPartialPoints += 30;
-    }
-    if (!isArtistNowCorrect && !isTitleOnlyMode) {
-      isArtistNowCorrect = dbArtists.some(a => {
-        const nG = normalizeText(combinedGuess), nA = normalizeText(a);
-        if (!nA || nA.length < 2) return false;
-        if (isFuzzyMatch(combinedGuess, [a])) return true;
-        if (nG.includes(nA) && nG.length <= nA.length * 1.5 + 5) return true;
-        if (nA.includes(nG) && nG.length >= nA.length * 0.7) return true;
-        return false;
-      });
-      if (isArtistNowCorrect && !feedback.artist) newPartialPoints += 20;
-    }
+    if (!isTitleNowCorrect) { isTitleNowCorrect = dbTitles.some(t => normalizeText(combinedGuess).includes(normalizeText(t)) || isFuzzyMatch(combinedGuess, [t])); if (isTitleNowCorrect && !feedback.title) newPartialPoints += 30; }
+    if (!isArtistNowCorrect && !isTitleOnlyMode) { isArtistNowCorrect = dbArtists.some(a => normalizeText(combinedGuess).includes(normalizeText(a)) || isFuzzyMatch(combinedGuess, [a])); if (isArtistNowCorrect && !feedback.artist) newPartialPoints += 20; }
     setPartialPointsEarned(newPartialPoints);
     const updatedFeedback = { title: isTitleNowCorrect, artist: isArtistNowCorrect };
     setFeedback(updatedFeedback);
