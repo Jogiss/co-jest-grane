@@ -10,6 +10,7 @@ import { supabase } from '../lib/supabase';
 import { MovieSuggestion, GameSuggestion, searchMoviesDebounced, searchGamesDebounced } from '../utils/suggestions';
 import { searchGamesLocalDebounced, preloadGameSuggestions } from '../utils/gameSuggestions';
 import { SongSuggestion, searchSongsDebounced, preloadSongSuggestions } from '../utils/songSearch';
+import { COUNTRIES, COUNTRY_CONTINENTS } from '../data/countries';
 import PlayerProfile from './PlayerProfile';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
 import AuthModal from './AuthModal';
@@ -93,8 +94,6 @@ const GameAppInner: React.FC = () => {
   const [gameSuggestions, setGameSuggestions] = useState<GameSuggestion[]>([]);
   const [countrySuggestions, setCountrySuggestions] = useState<string[]>([]);
   const [expandedMode, setExpandedMode] = useState<GameMode | null>(null);
-
-  const ALL_COUNTRIES = ['Afganistan','Albania','Algieria','Andora','Angola','Antigua i Barbuda','Arabia Saudyjska','Argentyna','Armenia','Australia','Austria','Azerbejdżan','Bahamy','Bahrajn','Bangladesz','Barbados','Belgia','Belize','Benin','Bhutan','Białoruś','Boliwia','Bośnia i Hercegowina','Botswana','Brazylia','Brunei','Bułgaria','Burkina Faso','Burundi','Chile','Chiny','Chorwacja','Cypr','Czad','Czarnogóra','Czechy','Dania','Demokratyczna Republika Konga','Dominika','Dominikana','Dżibuti','Egipt','Ekwador','Erytrea','Estonia','Eswatini','Etiopia','Fidżi','Filipiny','Finlandia','Francja','Gabon','Gambia','Ghana','Grecja','Grenada','Gruzja','Gujana','Gwatemala','Gwinea','Gwinea Bissau','Haiti','Hiszpania','Holandia','Honduras','Indie','Indonezja','Irak','Iran','Irlandia','Islandia','Izrael','Jamajka','Japonia','Jemen','Jordania','Kambodża','Kamerun','Kanada','Katar','Kazachstan','Kenia','Kirgistan','Kiribati','Kolumbia','Komory','Kongo','Korea Południowa','Korea Północna','Kostaryka','Kuba','Kuwejt','Laos','Lesotho','Liban','Liberia','Libia','Liechtenstein','Litwa','Luksemburg','Łotwa','Macedonia Północna','Madagaskar','Malawi','Malediwy','Malezja','Mali','Malta','Maroko','Mauretania','Mauritius','Meksyk','Mikronezja','Mjanma','Mołdawia','Monako','Mongolia','Mozambik','Namibia','Nauru','Nepal','Niemcy','Niger','Nigeria','Nikaragua','Norwegia','Nowa Zelandia','Oman','Pakistan','Palau','Panama','Papua-Nowa Gwinea','Paragwaj','Peru','Polska','Portugalia','Republika Południowej Afryki','Republika Środkowoafrykańska','Rosja','Ruanda','Rumunia','Saint Kitts i Nevis','Saint Lucia','Saint Vincent i Grenadyny','Salwador','Samoa','San Marino','Senegal','Serbia','Seszele','Sierra Leone','Singapur','Słowacja','Słowenia','Somalia','Sri Lanka','Stany Zjednoczone','Sudan','Sudan Południowy','Surinam','Syria','Szwajcaria','Szwecja','Tadżykistan','Tajlandia','Tanzania','Timor Wschodni','Togo','Tonga','Trynidad i Tobago','Tunezja','Turcja','Turkmenistan','Tuvalu','Uganda','Ukraina','Urugwaj','Uzbekistan','Vanuatu','Watykan','Wenezuela','Węgry','Wielka Brytania','Wietnam','Włochy','Wybrzeże Kości Słoniowej','Wyspy Marshalla','Wyspy Salomona','Zambia','Zimbabwe','Zjednoczone Emiraty Arabskie'];
 
   const themeConfig: Record<Theme, { primary: string; text: string; border: string; shadow: string; gradient: string; hover: string }> = {
     indigo: { primary: 'bg-indigo-600', text: 'text-indigo-400', border: 'border-indigo-500', shadow: 'shadow-indigo-500/20', gradient: 'from-indigo-950', hover: 'hover:bg-indigo-500' },
@@ -653,17 +652,20 @@ const GameAppInner: React.FC = () => {
     return matrix[a.length][b.length];
   };
 
+  // EXACT match: guess must match entire target (1 typo allowed, similar length)
   const isFuzzyMatch = (guess: string, targets: string[]): boolean => {
     const normGuess = normalizeText(guess);
     return targets.some(target => {
       const normTarget = normalizeText(target);
       if (normGuess === normTarget) return true;
-      if (normGuess.length < normTarget.length - 1) return false;
+      // Must be similar length (not "Shrek" matching "Shrek Trzeci")
+      if (Math.abs(normGuess.length - normTarget.length) > 2) return false;
       const distance = getLevenshteinDistance(normGuess, normTarget);
       return distance <= 1;
     });
   };
 
+  // CLOSE match: partial match for "BLISKO!" hint
   const isCloseMatch = (guess: string, targets: string[]): boolean => {
     const normGuess = normalizeText(guess);
     const guessWords = normGuess.split(' ').filter(w => w.length > 2);
@@ -671,13 +673,24 @@ const GameAppInner: React.FC = () => {
       const normTarget = normalizeText(target);
       const targetWords = normTarget.split(' ').filter(w => w.length > 2);
       if (targetWords.length === 0) return false;
+      // Word-by-word: check if any target word starts with guess word or vice versa
       const matchingWords = targetWords.filter(tWord =>
-        guessWords.some(gw => gw === tWord || getLevenshteinDistance(gw, tWord) <= 1)
+        guessWords.some(gw =>
+          gw === tWord ||
+          getLevenshteinDistance(gw, tWord) <= 1 ||
+          (gw.length >= 4 && tWord.startsWith(gw)) ||  // "teletub" → "teletubisie"
+          (tWord.length >= 4 && gw.startsWith(tWord))   // reverse
+        )
       );
       const matchRatio = matchingWords.length / targetWords.length;
-      if (matchRatio > 0.5 && matchRatio < 1) return true;
+      if (matchRatio >= 0.5) return true;
+      // Single-word target: check if guess starts with target or vice versa (min 4 chars)
+      if (normGuess.length >= 4 && normTarget.length >= 4) {
+        if (normTarget.startsWith(normGuess) || normGuess.startsWith(normTarget)) return true;
+      }
+      // Whole string fuzzy (2-3 typos for longer words)
       const distance = getLevenshteinDistance(normGuess, normTarget);
-      if (distance >= 2 && distance <= Math.max(2, Math.floor(normTarget.length * 0.25))) return true;
+      if (distance >= 2 && distance <= Math.max(2, Math.floor(normTarget.length * 0.3))) return true;
       return false;
     });
   };
@@ -710,7 +723,7 @@ const GameAppInner: React.FC = () => {
     // Kraj — show all countries immediately, filter by input
     if (effectiveCat === 'Kraj') {
       const q = cleaned.trim().toLowerCase();
-      const filtered = q.length === 0 ? ALL_COUNTRIES : ALL_COUNTRIES.filter(c => c.toLowerCase().includes(q));
+      const filtered = q.length === 0 ? COUNTRIES : COUNTRIES.filter(c => c.toLowerCase().includes(q));
       setCountrySuggestions(filtered);
       setShowSuggestions(filtered.length > 0);
       return;
@@ -874,8 +887,31 @@ const GameAppInner: React.FC = () => {
     const dbArtists = currentSong.artist.split(',').map(a => a.trim()).filter(Boolean);
     let isTitleNowCorrect = !!feedback.title; let isArtistNowCorrect = !!feedback.artist; let newPartialPoints = partialPointsEarned;
     if (isTitleOnlyMode) isArtistNowCorrect = true;
-    if (!isTitleNowCorrect) { isTitleNowCorrect = dbTitles.some(t => normalizeText(combinedGuess).includes(normalizeText(t)) || isFuzzyMatch(combinedGuess, [t])); if (isTitleNowCorrect && !feedback.title) newPartialPoints += 30; }
-    if (!isArtistNowCorrect && !isTitleOnlyMode) { isArtistNowCorrect = dbArtists.some(a => normalizeText(combinedGuess).includes(normalizeText(a)) || isFuzzyMatch(combinedGuess, [a])); if (isArtistNowCorrect && !feedback.artist) newPartialPoints += 20; }
+    if (!isTitleNowCorrect) {
+      isTitleNowCorrect = dbTitles.some(t => {
+        const nG = normalizeText(combinedGuess), nT = normalizeText(t);
+        if (!nT || nT.length < 2) return false;
+        // Exact or fuzzy match
+        if (isFuzzyMatch(combinedGuess, [t])) return true;
+        // Guess contains target BUT only if guess isn't much longer (prevents "Shrek dwa" matching "Shrek")
+        if (nG.includes(nT) && nG.length <= nT.length * 1.5 + 5) return true;
+        // Target contains guess — only if guess covers most of target
+        if (nT.includes(nG) && nG.length >= nT.length * 0.7) return true;
+        return false;
+      });
+      if (isTitleNowCorrect && !feedback.title) newPartialPoints += 30;
+    }
+    if (!isArtistNowCorrect && !isTitleOnlyMode) {
+      isArtistNowCorrect = dbArtists.some(a => {
+        const nG = normalizeText(combinedGuess), nA = normalizeText(a);
+        if (!nA || nA.length < 2) return false;
+        if (isFuzzyMatch(combinedGuess, [a])) return true;
+        if (nG.includes(nA) && nG.length <= nA.length * 1.5 + 5) return true;
+        if (nA.includes(nG) && nG.length >= nA.length * 0.7) return true;
+        return false;
+      });
+      if (isArtistNowCorrect && !feedback.artist) newPartialPoints += 20;
+    }
     setPartialPointsEarned(newPartialPoints);
     const updatedFeedback = { title: isTitleNowCorrect, artist: isArtistNowCorrect };
     setFeedback(updatedFeedback);
@@ -1508,7 +1544,21 @@ const GameAppInner: React.FC = () => {
                       {partialPointsEarned > 0 && gameStatus === 'playing' && <div className="bg-yellow-500/20 border border-yellow-500/50 rounded-xl px-4 py-2 text-yellow-400 text-sm font-bold mt-4">+{partialPointsEarned} PKT</div>}
                       <AnimatePresence>{closeHint.show && gameStatus === 'playing' && (<motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.8 }} className="bg-gradient-to-r from-orange-500/30 to-yellow-500/30 border border-orange-400/50 rounded-2xl px-6 py-3 text-center"><p className="text-orange-300 font-black text-lg">🔥 BLISKO!</p></motion.div>)}</AnimatePresence>
                       <div className="w-full space-y-3 mt-4">
-                        {history.length > 0 && (<div className="max-h-32 overflow-y-auto space-y-1 pr-1" ref={(el) => { if (el) el.scrollTop = el.scrollHeight; }}><div className="space-y-1">{history.map((h, i) => (<div key={i} className={`p-2 rounded-lg flex justify-between items-center text-xs border ${h.status === 'correct' ? 'bg-green-500/20 border-green-500 text-green-200' : h.status === 'partial' ? 'bg-yellow-500/20 border-yellow-500 text-yellow-200' : h.status === 'skipped' ? 'bg-white/5 border-white/10 text-white/40' : 'bg-red-500/20 border-red-500 text-red-200'}`}><span className="font-bold truncate mr-2">{h.title}</span>{h.status === 'correct' || h.status === 'partial' ? <CheckCircle size={14} className="shrink-0" /> : h.status === 'skipped' ? null : <XCircle size={14} className="shrink-0" />}</div>))}</div></div>)}
+                        {history.length > 0 && (<div className="max-h-40 overflow-y-auto space-y-1 pr-1" ref={(el) => { if (el) el.scrollTop = el.scrollHeight; }}><div className="space-y-1">{history.map((h, i) => {
+                          // For Kraj category: show continent hint
+                          const guessContinent = effectiveCategory === 'Kraj' && h.title !== 'POMINIĘTO' ? COUNTRY_CONTINENTS[h.title] : null;
+                          const correctContinent = effectiveCategory === 'Kraj' && currentSong ? COUNTRY_CONTINENTS[currentSong.title.split(',')[0].trim()] : null;
+                          const continentMatch = guessContinent && correctContinent && guessContinent === correctContinent;
+                          return (<div key={i} className={`p-2 rounded-lg flex justify-between items-center text-xs border ${h.status === 'correct' ? 'bg-green-500/20 border-green-500 text-green-200' : h.status === 'partial' ? 'bg-yellow-500/20 border-yellow-500 text-yellow-200' : h.status === 'skipped' ? 'bg-white/5 border-white/10 text-white/40' : 'bg-red-500/20 border-red-500 text-red-200'}`}>
+                            <div className="flex-1 min-w-0">
+                              <span className="font-bold truncate block">{h.title}</span>
+                              {guessContinent && h.status !== 'correct' && h.status !== 'skipped' && (
+                                <span className={`text-[9px] ${continentMatch ? 'text-green-400' : 'text-white/30'}`}>{continentMatch ? '✅' : '🌍'} {guessContinent}</span>
+                              )}
+                            </div>
+                            {h.status === 'correct' || h.status === 'partial' ? <CheckCircle size={14} className="shrink-0" /> : h.status === 'skipped' ? null : <XCircle size={14} className="shrink-0" />}
+                          </div>);
+                        })}</div></div>)}
                         <div className="flex gap-2">
                           <div className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest ${feedback.title ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-white/5 text-white/20 border border-white/5'}`}>{feedback.title && <CheckCircle size={12} />}{isTitleOnlyMode ? 'Nazwa' : 'Tytuł'}</div>
                           {!isTitleOnlyMode && <div className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest ${feedback.artist ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-white/5 text-white/20 border border-white/5'}`}>{feedback.artist && <CheckCircle size={12} />}Wykonawca</div>}

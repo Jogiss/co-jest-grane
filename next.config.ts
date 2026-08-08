@@ -1,8 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Optymalizacja dla Netlify
-  output: "standalone",
+  // output: "standalone", // Enable for Netlify deployment
   
   // Wyłącz strict mode żeby uniknąć podwójnego renderowania w dev
   reactStrictMode: false,

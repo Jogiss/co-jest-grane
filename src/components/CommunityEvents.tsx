@@ -187,7 +187,15 @@ const CommunityEvents: React.FC<CommunityEventsProps> = ({ isOpen, onClose, user
     try {
       const code = generateEventCode();
       const { data: ev, error: evErr } = await supabase.from('community_events').insert([{ creator_id: userId, creator_nickname: sanitizeText(nickname), title: sanitizeText(formTitle).slice(0, 50), description: sanitizeText(formDesc).slice(0, 200), category: formCategory, status: 'pending_review', code, play_count: 0, likes: 0, dislikes: 0 }]).select().single();
-      if (evErr || !ev) { const msg = evErr?.message || ''; setError(msg.includes('unique') ? 'Duplikat nazwy/kodu' : msg.includes('policy') ? 'Brak uprawnień' : `Błąd: ${msg || 'Nieznany'}`); setLoading(false); return; }
+      if (evErr || !ev) {
+        const msg = evErr?.message || '';
+        if (msg.includes('community_events_category_check')) {
+          setError('Baza Supabase nie pozwala jeszcze na kategorię Kraj. Wykonaj SQL z pliku SQL_COMMUNITY_COUNTRY_FIX.sql');
+        } else {
+          setError(msg.includes('unique') ? 'Duplikat nazwy/kodu' : msg.includes('policy') ? 'Brak uprawnień' : `Błąd: ${msg || 'Nieznany'}`);
+        }
+        setLoading(false); return;
+      }
       const songs = formSongs.map((s, i) => ({ event_id: ev.id, title: sanitizeText(s.title).slice(0, 100), artist: sanitizeText(s.artist).slice(0, 100), youtube_url: s.youtube_url.trim(), audio_url: s.audio_url?.trim() || null, start_time_seconds: Math.max(0, Math.floor(s.start_time_seconds)), order_index: i + 1, date: s.date || null }));
       await supabase.from('community_event_songs').insert(songs);
       try { const cur = parseInt(localStorage.getItem('mm_events_created') || '0'); localStorage.setItem('mm_events_created', String(cur + 1)); } catch {}
