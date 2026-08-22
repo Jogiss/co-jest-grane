@@ -48,6 +48,9 @@ const GameAppInner: React.FC = () => {
   const [activeEventName, setActiveEventName] = useState<string>('');
   const [activeEventNum, setActiveEventNum] = useState<number>(1);
   const activeEventSongsRef = React.useRef<any[]>([]);
+  const activeEventNameRef = React.useRef('');
+  const activeEventContextSlugRef = React.useRef('');
+  const eventLoadRequestRef = React.useRef(0);
   const [currentSong, setCurrentSong] = useState<Song | null>(null);
   const [theme, setTheme] = useState<Theme>('indigo');
   const [showSettings, setShowSettings] = useState(false);
@@ -585,7 +588,7 @@ const GameAppInner: React.FC = () => {
     }
   };
 
-  const clearEventState = () => { setActiveEventSlug(null); setActiveEventName(''); setActiveEventNum(1); activeEventSongsRef.current = []; };
+  const clearEventState = () => { eventLoadRequestRef.current++; activeEventContextSlugRef.current = ''; activeEventNameRef.current = ''; setActiveEventSlug(null); setActiveEventName(''); setActiveEventNum(1); setEventSongs([]); activeEventSongsRef.current = []; };
   const exitToMenu = () => { stopMusic(); stopResultPlayer(); destroyYtPlayer(); audioEngine.playUiClick(); clearEventState(); setView('menu'); };
   const pendingCommunityEventRef = React.useRef<string | null>(null);
 
@@ -730,52 +733,59 @@ const GameAppInner: React.FC = () => {
     if (cleaned.trim().length >= 2) {
       const evResults = activeEventSlug ? searchEventSongsLocal(cleaned, effectiveCat) : { movies: [], games: [], songs: [] };
 
+      // Helper: merge + dedupe + sort alphabetically (prevents event songs appearing first)
+      const mergeSortTitles = <T extends { title: string }>(a: T[], b: T[]): T[] => {
+        const seen = new Set<string>();
+        const out: T[] = [];
+        [...a, ...b].forEach(item => { const k = item.title.toLowerCase(); if (!seen.has(k)) { seen.add(k); out.push(item); } });
+        return out.sort((x, y) => x.title.localeCompare(y.title, 'pl'));
+      };
+      const mergeSortSongs = (a: SongSuggestion[], b: SongSuggestion[]): SongSuggestion[] => {
+        const seen = new Set<string>();
+        const out: SongSuggestion[] = [];
+        [...a, ...b].forEach(item => { const k = `${item.title}|${item.artist}`.toLowerCase(); if (!seen.has(k)) { seen.add(k); out.push(item); } });
+        return out.sort((x, y) => x.title.localeCompare(y.title, 'pl'));
+      };
+
       if (effectiveCat === 'Bajki') {
         searchMoviesDebounced(cleaned, (results: MovieSuggestion[]) => {
-          const combined = [...evResults.movies];
-          const existingTitles = new Set(combined.map(m => m.title.toLowerCase()));
-          results.forEach(r => { if (!existingTitles.has(r.title.toLowerCase())) combined.push(r); });
+          const combined = mergeSortTitles(evResults.movies, results);
           setMovieSuggestions(combined);
           setShowSuggestions(combined.length > 0);
         });
       }
       else if (effectiveCat === 'Gry') {
         searchGamesLocalDebounced(cleaned, (localResults: GameSuggestion[]) => {
-          const combined = [...evResults.games];
-          const existingTitles = new Set(combined.map(g => g.title.toLowerCase()));
-          localResults.forEach(r => { if (!existingTitles.has(r.title.toLowerCase())) combined.push(r); });
+          const combined = mergeSortTitles(evResults.games, localResults);
           setGameSuggestions(combined);
           setShowSuggestions(combined.length > 0);
         });
-        searchGamesDebounced(cleaned, (rawgResults: GameSuggestion[]) => { if (rawgResults.length > 0) { setGameSuggestions(prev => { const existingTitles = new Set(prev.map(g => g.title.toLowerCase())); const unique = rawgResults.filter(g => !existingTitles.has(g.title.toLowerCase())); return [...prev, ...unique]; }); setShowSuggestions(true); } });
+        searchGamesDebounced(cleaned, (rawgResults: GameSuggestion[]) => { if (rawgResults.length > 0) { setGameSuggestions(prev => mergeSortTitles(prev, rawgResults)); setShowSuggestions(true); } });
       }
       else if (effectiveCat === 'Inne') {
-        // Inne — event songs + global song suggestions
         if (cleaned.trim().length >= 3) {
           searchSongsDebounced(cleaned, (results: SongSuggestion[]) => {
-            const combined = [...evResults.songs];
-            const existingKeys = new Set(combined.map(s => `${s.title}|${s.artist}`.toLowerCase()));
-            results.forEach(r => { if (!existingKeys.has(`${r.title}|${r.artist}`.toLowerCase())) combined.push(r); });
+            const combined = mergeSortSongs(evResults.songs, results);
             setSpotifySuggestions(combined);
             setShowSuggestions(combined.length > 0);
           });
         } else {
-          setSpotifySuggestions(evResults.songs);
-          setShowSuggestions(evResults.songs.length > 0);
+          const sorted = mergeSortSongs(evResults.songs, []);
+          setSpotifySuggestions(sorted);
+          setShowSuggestions(sorted.length > 0);
         }
       }
       else if (cleaned.trim().length >= 3) {
         searchSongsDebounced(cleaned, (results: SongSuggestion[]) => {
-          const combined = [...evResults.songs];
-          const existingKeys = new Set(combined.map(s => `${s.title}|${s.artist}`.toLowerCase()));
-          results.forEach(r => { if (!existingKeys.has(`${r.title}|${r.artist}`.toLowerCase())) combined.push(r); });
+          const combined = mergeSortSongs(evResults.songs, results);
           setSpotifySuggestions(combined);
           setShowSuggestions(combined.length > 0);
         });
       }
       else {
-        setSpotifySuggestions(evResults.songs);
-        setShowSuggestions(evResults.songs.length > 0);
+        const sorted = mergeSortSongs(evResults.songs, []);
+        setSpotifySuggestions(sorted);
+        setShowSuggestions(sorted.length > 0);
       }
     } else {
       setShowSuggestions(false);
@@ -790,8 +800,11 @@ const GameAppInner: React.FC = () => {
   const [navCooldown, setNavCooldown] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState<string>('');
 
-  const startEventGame = (eventSlug: string, eventSong: any, challengeNum: number) => {
-    if (navCooldown) return; setNavCooldown(true); setTimeout(() => setNavCooldown(false), 800);
+  const startEventGame = (eventSlug: string, eventSong: any, challengeNum: number, eventName?: string) => {
+    if (navCooldown || !eventSong) return;
+    // Never allow a song list from another event context.
+    if (activeEventContextSlugRef.current && activeEventContextSlugRef.current !== eventSlug) return;
+    setNavCooldown(true); setTimeout(() => setNavCooldown(false), 1500);
     stopMusic(); stopResultPlayer(); destroyYtPlayer(); audioEngine.stopAll();
     setGameStatus('playing'); setAttempt(0); setHistory([]); setGuessTitle(''); setGuessArtist('');
     setFeedback({ title: false, artist: false }); setPartialPointsEarned(0); setCloseHint({ show: false, type: null });
@@ -800,26 +813,17 @@ const GameAppInner: React.FC = () => {
     setActiveEventNum(challengeNum);
     // Determine event name - twórcy vs społeczność
     if (eventSlug.startsWith('community-')) {
-      // Community event - name comes from onPlayEvent callback, already set via activeEventName or use generic
-      // Don't overwrite if already set by community callback
-      if (!activeEventName || activeEventName === 'Event') {
-        setActiveEventName('Event Społeczności');
-      }
+      const resolvedName = eventName || activeEventNameRef.current || 'Event Społeczności';
+      activeEventNameRef.current = resolvedName;
+      setActiveEventName(resolvedName);
     } else {
-      // Twórca event - find in events list
       const ev = events.find(e => e.slug === eventSlug);
-      setActiveEventName(ev?.name || 'Event Twórcy');
+      const resolvedName = eventName || ev?.name || activeEventNameRef.current || 'Event Twórcy';
+      activeEventNameRef.current = resolvedName;
+      setActiveEventName(resolvedName);
     }
-    // Only update songs ref if we have songs AND they belong to current event slug
-    // This prevents mixing songs between different event types
-    if (eventSongs.length > 0) {
-      // Check if these songs actually belong to this event
-      const firstSongKey = `event-${eventSlug}-${eventSongs[0]?.id}`;
-      const belongsToThisEvent = eventSlug.startsWith('community-') || firstSongKey.includes(eventSlug);
-      if (belongsToThisEvent) {
-        activeEventSongsRef.current = eventSongs;
-      }
-    }
+    // IMPORTANT: do not overwrite activeEventSongsRef here.
+    // The exact list is set when a specific event is opened.
     const rawCat = (eventSong.category || 'muzyka').toLowerCase();
     let cat: Category = 'Polskie';
     if (rawCat === 'zagraniczne' || rawCat === 'foreign') cat = 'Zagraniczne';
@@ -1012,29 +1016,39 @@ const GameAppInner: React.FC = () => {
         {showAuthModal && <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} theme={currentTheme} />}
         {showMultiplayer && <MultiplayerMode userId={userId} nickname={nickname} theme={currentTheme} onClose={() => setShowMultiplayer(false)} />}
         {showCommunity && <CommunityEvents isOpen={showCommunity} onClose={() => { setShowCommunity(false); pendingCommunityEventRef.current = null; }} userId={userId} nickname={nickname} isAdmin={!!user && (user.email === 'jogisek@interia.pl' || user.email === 'kamillejzak@interia.pl')} theme={currentTheme} initialEventId={pendingCommunityEventRef.current} onInitialEventHandled={() => { pendingCommunityEventRef.current = null; }}
-          onPlayEvent={(communityEvent, specificSong, specificIndex, allSongs) => {
+          onPlayEvent={(communityEvent, specificSong, _specificIndex, allSongs) => {
+            if (navCooldown) return;
+            const requestId = ++eventLoadRequestRef.current;
             (async () => {
               try {
-                let sorted: any[];
-                if (allSongs && allSongs.length > 0) { sorted = allSongs; }
-                else {
+                let sourceSongs: any[];
+                if (allSongs && allSongs.length > 0) {
+                  sourceSongs = [...allSongs];
+                } else {
                   const { data: csongs } = await supabase.from('community_event_songs').select('*').eq('event_id', communityEvent.id).order('order_index');
-                  if (!csongs || csongs.length === 0) return;
-                  sorted = [...csongs].sort((a: any, b: any) => (a.date || a.id).toString().localeCompare((b.date || b.id).toString()));
+                  if (requestId !== eventLoadRequestRef.current || !csongs || csongs.length === 0) return;
+                  sourceSongs = [...csongs];
                 }
-                // Inject event category into each song so startEventGame knows the category
+                if (requestId !== eventLoadRequestRef.current) return;
+                // Keep exactly the same order as event detail: order_index, never date/UUID.
+                sourceSongs.sort((a: any, b: any) => Number(a.order_index ?? 0) - Number(b.order_index ?? 0));
                 const eventCat = communityEvent.category === 'cartoon' ? 'bajki' : communityEvent.category === 'game' ? 'gry' : communityEvent.category === 'music' ? 'muzyka' : communityEvent.category === 'other' ? 'inne' : communityEvent.category === 'country' ? 'kraj' : communityEvent.category;
-                const songsWithCat = sorted.map((s: any) => ({ ...s, category: s.category || eventCat }));
+                const songsWithCat = sourceSongs.map((s: any) => ({ ...s, category: s.category || eventCat }));
+                const requestedId = specificSong?.id;
+                const targetIndex = requestedId ? songsWithCat.findIndex((s: any) => s.id === requestedId) : 0;
+                const safeIndex = targetIndex >= 0 ? targetIndex : 0;
+                const target = songsWithCat[safeIndex];
+                const contextSlug = `community-${communityEvent.id}`;
+                const contextName = communityEvent.title || 'Event Społeczności';
+                activeEventContextSlugRef.current = contextSlug;
+                activeEventNameRef.current = contextName;
                 setEventSongs(songsWithCat);
                 activeEventSongsRef.current = songsWithCat;
-                // Set community event name BEFORE calling startEventGame
-                setActiveEventName(communityEvent.title || 'Event Społeczności');
-                const target = specificSong ? { ...specificSong, category: (specificSong as any).category || eventCat } : songsWithCat[0];
-                const idx = specificIndex || (songsWithCat.indexOf(songsWithCat.find((s: any) => s.id === target.id) || songsWithCat[0]) + 1);
+                setActiveEventName(contextName);
                 setShowCommunity(false);
-                // Increment play count
-                try { await supabase.from('community_events').update({ play_count: (communityEvent.play_count || 0) + 1 }).eq('id', communityEvent.id); } catch {}
-                startEventGame(`community-${communityEvent.id}`, target, idx);
+                startEventGame(contextSlug, target, safeIndex + 1, contextName);
+                // Non-blocking analytics update; it must not delay navigation.
+                void supabase.from('community_events').update({ play_count: (communityEvent.play_count || 0) + 1 }).eq('id', communityEvent.id);
               } catch (e) { console.error('Play community event error:', e); }
             })();
           }}
@@ -1044,7 +1058,7 @@ const GameAppInner: React.FC = () => {
             <div className="min-h-screen flex flex-col items-center py-8 px-4">
               {selectedEvent ? (
                 <div className="w-full max-w-3xl space-y-6">
-                  <button onClick={() => { setSelectedEvent(null); setEventSongs([]); }} className="flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/10 px-4 py-2.5 rounded-xl transition-all group"><ArrowLeft size={16} className="text-white/60 group-hover:text-white" /><span className="text-white/60 group-hover:text-white text-xs font-bold uppercase tracking-wider">Powrót</span></button>
+                  <button onClick={() => { eventLoadRequestRef.current++; activeEventContextSlugRef.current = ''; activeEventNameRef.current = ''; setSelectedEvent(null); setEventSongs([]); activeEventSongsRef.current = []; }} className="flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/10 px-4 py-2.5 rounded-xl transition-all group"><ArrowLeft size={16} className="text-white/60 group-hover:text-white" /><span className="text-white/60 group-hover:text-white text-xs font-bold uppercase tracking-wider">Powrót</span></button>
                   <div className="text-center relative">
                     <span className="text-6xl mb-4 block">{selectedEvent.emoji}</span>
                     <h2 className="text-3xl font-black text-white uppercase">{selectedEvent.name}</h2>
@@ -1120,7 +1134,21 @@ const GameAppInner: React.FC = () => {
                         const evDone = evTotal > 0 && evPlayed >= evTotal;
                         const evPct = evTotal > 0 ? Math.round((evWon / evTotal) * 100) : 0;
                         return (
-                        <button key={ev.id} onClick={async () => { setSelectedEvent(ev); try { const { data } = await supabase.from('event_songs').select('*').eq('event_slug', ev.slug).order('id'); if (data) setEventSongs(data); } catch {} }}
+                        <button key={ev.id} onClick={async () => {
+                          const requestId = ++eventLoadRequestRef.current;
+                          setSelectedEvent(ev);
+                          setEventSongs([]);
+                          activeEventSongsRef.current = [];
+                          try {
+                            const { data } = await supabase.from('event_songs').select('*').eq('event_slug', ev.slug);
+                            if (requestId !== eventLoadRequestRef.current || !data) return;
+                            const ordered = [...data].sort((a: any, b: any) => (a.date || a.id).toString().localeCompare((b.date || b.id).toString()));
+                            activeEventContextSlugRef.current = ev.slug;
+                            activeEventNameRef.current = ev.name;
+                            setEventSongs(ordered);
+                            activeEventSongsRef.current = ordered;
+                          } catch {}
+                        }}
                           className={`relative bg-gradient-to-br ${evDone ? 'from-green-500/10 to-emerald-500/5 border-green-500/30 hover:border-green-500/50' : ev.color ? '' : 'from-yellow-500/10 to-orange-500/5 border-yellow-500/20 hover:border-yellow-500/40'} border rounded-3xl p-6 text-left transition-all group overflow-hidden`}
                           style={!evDone && ev.color ? { background: `linear-gradient(135deg, ${ev.color}15, ${ev.color}05)`, borderColor: `${ev.color}30` } : undefined}>
                           {evTotal > 0 && <div className={`absolute top-3 right-3 text-[10px] font-black px-2.5 py-1 rounded-full border z-20 ${evDone ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'}`}>{evPlayed}/{evTotal}</div>}
@@ -1470,23 +1498,25 @@ const GameAppInner: React.FC = () => {
                     const prevDateP = currentIndexP > 0 ? sortedDatesP[currentIndexP - 1] : undefined;
                     const nextDateP = currentIndexP >= 0 && currentIndexP < sortedDatesP.length - 1 ? sortedDatesP[currentIndexP + 1] : undefined;
                     const isNextAvailP = nextDateP && nextDateP <= localTodayP;
-                    const pEvSongs = activeEventSongsRef.current;
-                    const pEvIdx = activeEventSlug ? activeEventNum - 1 : -1;
-                    const pEvSorted = activeEventSlug ? [...pEvSongs].sort((a: any, b: any) => (a.date || a.id.toString()).localeCompare(b.date || b.id.toString())) : [];
-                    const pEvPrev = pEvIdx > 0 ? pEvSorted[pEvIdx - 1] : null;
-                    const pEvNext = pEvIdx >= 0 && pEvIdx < pEvSorted.length - 1 ? pEvSorted[pEvIdx + 1] : null;
+                    const pEvSongs = activeEventSlug ? activeEventSongsRef.current : [];
+                    const pEvIdx = activeEventSlug && currentSong ? pEvSongs.findIndex((s: any) => `event-${activeEventSlug}-${s.id}` === currentSong.id) : -1;
+                    const pEvPrev = pEvIdx > 0 ? pEvSongs[pEvIdx - 1] : null;
+                    const pEvNext = pEvIdx >= 0 && pEvIdx < pEvSongs.length - 1 ? pEvSongs[pEvIdx + 1] : null;
                     const pEvNextAvail = pEvNext && (!pEvNext.date || pEvNext.date <= localTodayP);
                     const pHasPrev = activeEventSlug ? !!pEvPrev : !!prevDateP;
                     const pHasNext = activeEventSlug ? !!pEvNextAvail : !!isNextAvailP;
+                    // Strict navigation helpers - strictly prevent fallback mixing between daily and events
+                    const handlePrevClick = () => { if (navCooldown) return; if (activeEventSlug && pEvPrev) startEventGame(activeEventSlug, pEvPrev, pEvIdx, activeEventNameRef.current); else if (!activeEventSlug && prevDateP) startDailyGame(prevDateP); };
+                    const handleNextClick = () => { if (navCooldown) return; if (activeEventSlug && pEvNext) startEventGame(activeEventSlug, pEvNext, pEvIdx + 2, activeEventNameRef.current); else if (!activeEventSlug && nextDateP && isNextAvailP) startDailyGame(nextDateP); };
                     return (
                     <div className="flex items-center justify-center w-full max-w-7xl px-4 relative">
                       {/* Side nav buttons - visible ONLY during active playing, hidden after game ends */}
                       {gameStatus === 'playing' && (<>
-                        <button disabled={!pHasPrev || navCooldown} onClick={() => { if (activeEventSlug && pEvPrev) startEventGame(activeEventSlug, pEvPrev, pEvIdx); else if (prevDateP) startDailyGame(prevDateP); }} className={`fixed left-2 md:left-6 lg:left-[calc(50%-28rem)] top-[45%] z-30 px-3 py-4 md:px-4 md:py-5 rounded-2xl bg-white/[0.07] hover:bg-white/15 backdrop-blur-md border border-white/10 flex flex-col items-center justify-center gap-1 shadow-lg transition-all ${!pHasPrev || navCooldown ? 'opacity-0 pointer-events-none' : ''}`}>
+                        <button disabled={!pHasPrev || navCooldown} onClick={handlePrevClick} className={`fixed left-2 md:left-6 lg:left-[calc(50%-28rem)] top-[45%] z-30 px-3 py-4 md:px-4 md:py-5 rounded-2xl bg-white/[0.07] hover:bg-white/15 backdrop-blur-md border border-white/10 flex flex-col items-center justify-center gap-1 shadow-lg transition-all ${!pHasPrev || navCooldown ? 'opacity-0 pointer-events-none' : ''}`}>
                           <ChevronLeft size={22} className="text-white/50" />
                           <span className="text-[8px] font-black text-white/40 uppercase tracking-wider">Poprzednie</span>
                         </button>
-                        <button disabled={!pHasNext || navCooldown} onClick={() => { if (activeEventSlug && pEvNext) startEventGame(activeEventSlug, pEvNext, pEvIdx + 2); else if (nextDateP && isNextAvailP) startDailyGame(nextDateP); }} className={`fixed right-2 md:right-6 lg:right-[calc(50%-28rem)] top-[45%] z-30 px-3 py-4 md:px-4 md:py-5 rounded-2xl bg-white/[0.07] hover:bg-white/15 backdrop-blur-md border border-white/10 flex flex-col items-center justify-center gap-1 shadow-lg transition-all ${!pHasNext || navCooldown ? 'opacity-0 pointer-events-none' : ''}`}>
+                        <button disabled={!pHasNext || navCooldown} onClick={handleNextClick} className={`fixed right-2 md:right-6 lg:right-[calc(50%-28rem)] top-[45%] z-30 px-3 py-4 md:px-4 md:py-5 rounded-2xl bg-white/[0.07] hover:bg-white/15 backdrop-blur-md border border-white/10 flex flex-col items-center justify-center gap-1 shadow-lg transition-all ${!pHasNext || navCooldown ? 'opacity-0 pointer-events-none' : ''}`}>
                           <ChevronRight size={22} className="text-white/50" />
                           <span className="text-[8px] font-black text-white/40 uppercase tracking-wider">Następne</span>
                         </button>
@@ -1504,7 +1534,7 @@ const GameAppInner: React.FC = () => {
                           <div className={`bg-gradient-to-r ${activeEventSlug.startsWith('community-') ? 'from-indigo-500/20 to-cyan-500/20 border-indigo-500/30' : 'from-yellow-500/20 to-orange-500/20 border-yellow-500/30'} border rounded-2xl px-5 py-2 mb-2`}>
                             <span className={`${activeEventSlug.startsWith('community-') ? 'text-indigo-400' : 'text-yellow-400'} text-[9px] font-black uppercase tracking-widest`}>{activeEventSlug.startsWith('community-') ? '🌍' : '🎪'} {activeEventName}</span>
                           </div>
-                          <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} key={`event-${activeEventNum}`} className="text-3xl font-black uppercase tracking-[0.2em] text-white mb-2">WYZWANIE #{activeEventNum}</motion.div>
+                          <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} key={`event-${pEvIdx >= 0 ? pEvIdx + 1 : activeEventNum}`} className="text-3xl font-black uppercase tracking-[0.2em] text-white mb-2">WYZWANIE #{pEvIdx >= 0 ? pEvIdx + 1 : activeEventNum}</motion.div>
                           <div className={`${activeEventSlug.startsWith('community-') ? 'text-indigo-400/70' : 'text-yellow-400/70'} text-xs font-bold uppercase tracking-widest mb-2`}>{activeEventSlug.startsWith('community-') ? 'Społeczność' : 'Event Twórcy'} • {activeEventName}</div>
                         </>
                       ) : (
@@ -1575,26 +1605,31 @@ const GameAppInner: React.FC = () => {
                     const nextDateR = currentIndexR >= 0 && currentIndexR < sortedDatesR.length - 1 ? sortedDatesR[currentIndexR + 1] : undefined;
                     const isNextAvailR = nextDateR && nextDateR <= localTodayR;
                     // Event navigation
-                    const rEvSongs = activeEventSongsRef.current;
-                    const rEvIdx = activeEventSlug ? activeEventNum - 1 : -1;
-                    const rEvSorted = activeEventSlug ? [...rEvSongs].sort((a: any, b: any) => (a.date || a.id.toString()).localeCompare(b.date || b.id.toString())) : [];
-                    const rEvPrev = rEvIdx > 0 ? rEvSorted[rEvIdx - 1] : null;
-                    const rEvNext = rEvIdx >= 0 && rEvIdx < rEvSorted.length - 1 ? rEvSorted[rEvIdx + 1] : null;
+                    const rEvSongs = activeEventSlug ? activeEventSongsRef.current : [];
+                    const rEvIdx = activeEventSlug && currentSong ? rEvSongs.findIndex((s: any) => `event-${activeEventSlug}-${s.id}` === currentSong.id) : -1;
+                    const rEvPrev = rEvIdx > 0 ? rEvSongs[rEvIdx - 1] : null;
+                    const rEvNext = rEvIdx >= 0 && rEvIdx < rEvSongs.length - 1 ? rEvSongs[rEvIdx + 1] : null;
                     const rEvNextAvail = rEvNext && (!rEvNext.date || rEvNext.date <= localTodayR);
                     const rHasPrev = activeEventSlug ? !!rEvPrev : !!prevDateR;
                     const rHasNext = activeEventSlug ? !!rEvNextAvail : !!isNextAvailR;
-                    const challengeNumR = activeEventSlug ? activeEventNum : (currentIndexR !== -1 ? currentIndexR + 1 : '?');
+                    const challengeNumR = activeEventSlug ? (rEvIdx >= 0 ? rEvIdx + 1 : activeEventNum) : (currentIndexR !== -1 ? currentIndexR + 1 : '?');
                     return (
                     <div className="flex items-center justify-center w-full max-w-7xl px-4 relative">
                       {/* Side nav buttons in result */}
-                      <button disabled={!rHasPrev || navCooldown} onClick={() => { if (activeEventSlug && rEvPrev) startEventGame(activeEventSlug, rEvPrev, rEvIdx); else if (prevDateR) startDailyGame(prevDateR); }} className={`fixed left-2 md:left-6 lg:left-[calc(50%-28rem)] top-[45%] z-30 px-3 py-4 md:px-4 md:py-5 rounded-2xl bg-white/[0.07] hover:bg-white/15 backdrop-blur-md border border-white/10 flex flex-col items-center justify-center gap-1 shadow-lg transition-all ${!rHasPrev || navCooldown ? 'opacity-0 pointer-events-none' : ''}`}>
-                        <ChevronLeft size={22} className="text-white/50" />
-                        <span className="text-[8px] font-black text-white/40 uppercase tracking-wider">Poprzednie</span>
-                      </button>
-                      <button disabled={!rHasNext || navCooldown} onClick={() => { if (activeEventSlug && rEvNext) startEventGame(activeEventSlug, rEvNext, rEvIdx + 2); else if (nextDateR && isNextAvailR) startDailyGame(nextDateR); }} className={`fixed right-2 md:right-6 lg:right-[calc(50%-28rem)] top-[45%] z-30 px-3 py-4 md:px-4 md:py-5 rounded-2xl bg-white/[0.07] hover:bg-white/15 backdrop-blur-md border border-white/10 flex flex-col items-center justify-center gap-1 shadow-lg transition-all ${!rHasNext || navCooldown ? 'opacity-0 pointer-events-none' : ''}`}>
-                        <ChevronRight size={22} className="text-white/50" />
-                        <span className="text-[8px] font-black text-white/40 uppercase tracking-wider">Następne</span>
-                      </button>
+                      {(() => {
+                        const handleResultPrev = () => { if (navCooldown) return; if (activeEventSlug && rEvPrev) startEventGame(activeEventSlug, rEvPrev, rEvIdx, activeEventNameRef.current); else if (!activeEventSlug && prevDateR) startDailyGame(prevDateR); };
+                        const handleResultNext = () => { if (navCooldown) return; if (activeEventSlug && rEvNext) startEventGame(activeEventSlug, rEvNext, rEvIdx + 2, activeEventNameRef.current); else if (!activeEventSlug && nextDateR && isNextAvailR) startDailyGame(nextDateR); };
+                        return (<>
+                          <button disabled={!rHasPrev || navCooldown} onClick={handleResultPrev} className={`fixed left-2 md:left-6 lg:left-[calc(50%-28rem)] top-[45%] z-30 px-3 py-4 md:px-4 md:py-5 rounded-2xl bg-white/[0.07] hover:bg-white/15 backdrop-blur-md border border-white/10 flex flex-col items-center justify-center gap-1 shadow-lg transition-all ${!rHasPrev || navCooldown ? 'opacity-0 pointer-events-none' : ''}`}>
+                            <ChevronLeft size={22} className="text-white/50" />
+                            <span className="text-[8px] font-black text-white/40 uppercase tracking-wider">Poprzednie</span>
+                          </button>
+                          <button disabled={!rHasNext || navCooldown} onClick={handleResultNext} className={`fixed right-2 md:right-6 lg:right-[calc(50%-28rem)] top-[45%] z-30 px-3 py-4 md:px-4 md:py-5 rounded-2xl bg-white/[0.07] hover:bg-white/15 backdrop-blur-md border border-white/10 flex flex-col items-center justify-center gap-1 shadow-lg transition-all ${!rHasNext || navCooldown ? 'opacity-0 pointer-events-none' : ''}`}>
+                            <ChevronRight size={22} className="text-white/50" />
+                            <span className="text-[8px] font-black text-white/40 uppercase tracking-wider">Następne</span>
+                          </button>
+                        </>);
+                      })()}
                     <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white/10 backdrop-blur-3xl p-6 md:p-8 rounded-[2.5rem] border border-white/20 text-center shadow-2xl max-w-md lg:max-w-lg xl:max-w-xl w-full mx-auto relative z-10 my-4">
                       {gameStatus === 'won' ? (
                         <><CheckCircle size={60} className="text-green-500 mx-auto mb-4" /><h2 className="text-2xl md:text-3xl font-black text-white mb-1 leading-none uppercase italic">WYZWANIE #{challengeNumR}</h2><p className={`${currentTheme.text} font-bold text-sm uppercase tracking-widest`}>Zgadłeś w {attempt + 1} próbie</p><p className="text-yellow-500 font-black text-lg animate-bounce mt-1">+{(attempt < 6 ? [100, 80, 60, 40, 20, 10][attempt] : 0) + partialPointsEarned} PKT!</p></>
