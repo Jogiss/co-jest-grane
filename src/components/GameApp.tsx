@@ -811,6 +811,31 @@ const GameAppInner: React.FC = () => {
     setShowSuggestions(false); setSpotifySuggestions([]); setErrorMessage(null);
     setActiveEventSlug(eventSlug);
     setActiveEventNum(challengeNum);
+
+    // Count play_count for community events when a game actually starts.
+    // This covers the direct tile clicks and the side arrows.
+    if (eventSlug.startsWith('community-')) {
+      const communityId = eventSlug.replace('community-', '');
+      void (async () => {
+        try {
+          const { data } = await supabase
+            .from('community_events')
+            .select('play_count')
+            .eq('id', communityId)
+            .maybeSingle();
+
+          if (data) {
+            await supabase
+              .from('community_events')
+              .update({ play_count: Number(data.play_count || 0) + 1 })
+              .eq('id', communityId);
+          }
+        } catch (error) {
+          console.error('[EVENT PLAY COUNT] Increment failed:', error);
+        }
+      })();
+    }
+
     // Determine event name - twórcy vs społeczność
     if (eventSlug.startsWith('community-')) {
       const resolvedName = eventName || activeEventNameRef.current || 'Event Społeczności';
@@ -1047,8 +1072,6 @@ const GameAppInner: React.FC = () => {
                 setActiveEventName(contextName);
                 setShowCommunity(false);
                 startEventGame(contextSlug, target, safeIndex + 1, contextName);
-                // Non-blocking analytics update; it must not delay navigation.
-                void supabase.from('community_events').update({ play_count: (communityEvent.play_count || 0) + 1 }).eq('id', communityEvent.id);
               } catch (e) { console.error('Play community event error:', e); }
             })();
           }}
