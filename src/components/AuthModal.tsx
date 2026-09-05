@@ -35,9 +35,9 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, theme }) => {
   const handleGoogleLogin = async () => {
     setLoading(true);
     setError(null);
-    
+
     const { user: newUser, error: authError } = await signInWithGoogle();
-    
+
     if (authError) {
       setError(authError);
       setLoading(false);
@@ -58,13 +58,13 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, theme }) => {
       } else {
         setSuccess('Zalogowano pomyślnie!');
       }
-      
+
       setTimeout(() => {
         onClose();
         setSuccess(null);
       }, 1500);
     }
-    
+
     setLoading(false);
   };
 
@@ -75,11 +75,11 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, theme }) => {
 
     if (mode === 'register') {
       const { user: newUser, error: authError } = await registerWithEmail(
-        email, 
-        password, 
+        email,
+        password,
         displayName || nickname
       );
-      
+
       if (authError) {
         setError(authError);
         setLoading(false);
@@ -101,7 +101,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, theme }) => {
       }
     } else {
       const { user: newUser, error: authError } = await signInWithEmail(email, password);
-      
+
       if (authError) {
         setError(authError);
         setLoading(false);
@@ -151,13 +151,13 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, theme }) => {
       setError('Nick może mieć max. 15 znaków');
       return;
     }
-    
+
     setLoading(true);
     setError(null);
     setNickname(trimmed);
-    
+
     await syncProgressToCloud();
-    
+
     setSuccess('Nick zmieniony!');
     setEditingNick(false);
     setLoading(false);
@@ -247,7 +247,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, theme }) => {
                 </button>
               </div>
             )}
-            <p className="text-white/20 text-[9px] mt-2">Ten nick jest widoczny w rankingu</p>
+            <p className="text-white/20 text-[9px] mt-2">Ten nick jest widoczny innym graczom</p>
           </div>
 
           <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4 mb-3 flex items-center gap-3">
@@ -359,7 +359,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, theme }) => {
               />
             </div>
           )}
-          
+
           <div className="relative">
             <Mail size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
             <input

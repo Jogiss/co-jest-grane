@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { auth, onAuthStateChanged } from '../lib/firebase';
 import type { User } from '../lib/firebase';
 import { supabase } from '../lib/supabase';
@@ -90,7 +90,7 @@ function loadLocalProgress(): { progress: UserProgress; nickname: string } {
   else if (parsedProgress && typeof parsedProgress === 'object' && !parsedProgress.completedDays) {
     // Check if any key looks like a day key (contains dashes and status)
     const keys = Object.keys(parsedProgress);
-    const looksLikeOldFormat = keys.length > 0 && keys.some(k => 
+    const looksLikeOldFormat = keys.length > 0 && keys.some(k =>
       (k.includes('-klasyczny-') || k.includes('-piano-') || k.includes('-beat-') || k.includes('-reverse-') || k.startsWith('event-'))
     );
     if (looksLikeOldFormat) {
@@ -249,24 +249,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch {}
   };
 
-  const updateProgress = async (updates: Partial<UserProgress>) => {
-    const newProgress = { ...progress, ...updates };
-    setProgress(newProgress);
-    saveProgressToLocalStorage(newProgress);
-    if (user) {
+  // Synchronizacja chmurowa z DEBOUNCE — oszczędność transferu:
+  // progress_data to cały JSON completedDays (u weteranów setki KB).
+  // Wcześniej szedł przy KAŻDYM zgadnięciu; teraz grupujemy zapisy
+  // i wysyłamy najnowszy stan ~8 s po ostatniej zmianie.
+  const cloudSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleCloudSync = useCallback((p: UserProgress) => {
+    if (!user) return;
+    if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
+    cloudSyncTimerRef.current = setTimeout(async () => {
+      cloudSyncTimerRef.current = null;
       try {
         const progressData = {
-          user_id: user.uid, nickname, progress_data: newProgress.completedDays,
-          stats: newProgress.stats, achievements: newProgress.achievements,
-          daily_streak: newProgress.dailyStreak, last_daily: newProgress.lastDailyReward,
-          theme: newProgress.theme, settings: { autoPlayAfterGame: newProgress.autoPlayAfterGame, showStatsPanel: newProgress.showStatsPanel },
+          user_id: user.uid, nickname: (typeof window !== 'undefined' ? localStorage.getItem('mm_nickname') : null) || nickname,
+          progress_data: p.completedDays,
+          stats: p.stats, achievements: p.achievements,
+          daily_streak: p.dailyStreak, last_daily: p.lastDailyReward,
+          theme: p.theme, settings: { autoPlayAfterGame: p.autoPlayAfterGame, showStatsPanel: p.showStatsPanel },
           updated_at: new Date().toISOString(),
         };
         const { data: existing } = await supabase.from('user_progress').select('id').eq('user_id', user.uid).single();
         if (existing) await supabase.from('user_progress').update(progressData).eq('user_id', user.uid);
         else await supabase.from('user_progress').insert([progressData]);
       } catch (e) { console.error('Sync error:', e); }
-    }
+    }, 8000);
+  }, [user, nickname]);
+
+  const updateProgress = async (updates: Partial<UserProgress>) => {
+    const newProgress = { ...progress, ...updates };
+    setProgress(newProgress);
+    saveProgressToLocalStorage(newProgress);
+    if (user) scheduleCloudSync(newProgress);
   };
 
   const syncProgressToCloud = async () => {
@@ -303,19 +316,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const migrateOldData = async (): Promise<boolean> => {
-    if (!user) return false;
-    const oldUid = typeof window !== 'undefined' ? localStorage.getItem('mm_uid') : null;
-    if (!oldUid || oldUid === user.uid) return false;
-    try {
-      const { data: oldLeaderboard } = await supabase.from('leaderboard_view').select('*').eq('user_id', oldUid).maybeSingle();
-      if (oldLeaderboard) {
-        const deltaPoints = oldLeaderboard.points || 0;
-        if (deltaPoints > 0) {
-          await supabase.from('game_results').insert([{ user_id: user.uid, nickname, points: deltaPoints, is_win: false, result_type: 'migration' }]);
-        }
-      }
-      return true;
-    } catch (e) { console.error('Migration error:', e); return false; }
+    // ZMIANA (ranking usunięty): dawna migracja punktów szła przez
+    // leaderboard_view + INSERT do game_results — oba mechanizmy już nieistnieją.
+    // Migracja POSTĘPÓW (completedDays) dzieje się automatycznie przy logowaniu:
+    // onAuthStateChanged merguje user_progress po Firebase UID i starym anon UID.
+    // Nie trzeba tu nic robić.
+    return false;
   };
 
   return (

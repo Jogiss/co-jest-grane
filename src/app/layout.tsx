@@ -5,7 +5,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Co Jest Grane? - Zgadnij piosenkę po fragmencie! Darmowa gra muzyczna online",
-  description: "Zagraj w Co Jest Grane - darmową grę muzyczną online! Rozpoznaj piosenkę po krótkim fragmencie. Polskie i zagraniczne hity, bajki, gry. 4 tryby: klasyczny, piano, beat, od tyłu. Ranking graczy, osiągnięcia i codzienne wyzwania. Sprawdź się!",
+  description: "Zagraj w Co Jest Grane - darmową grę muzyczną online! Rozpoznaj piosenkę po krótkim fragmencie. Polskie i zagraniczne hity, bajki, gry. 4 tryby: klasyczny, piano, beat, od tyłu. Osiągnięcia i codzienne wyzwania. Sprawdź się!",
   keywords: "co jest grane, zgadnij piosenkę, gra muzyczna, heardle po polsku, polskie piosenki, quiz muzyczny, zgadywanie piosenek, rozpoznaj piosenkę, gra online za darmo, muzyczny quiz, heardle polska, zagadki muzyczne, odgadnij piosenkę, gra z piosenkami, muzyka quiz, darmowa gra przeglądarkowa",
   authors: [{ name: "Jogis", url: "https://www.youtube.com/@Jogiss" }],
   robots: "index, follow",
@@ -25,14 +25,14 @@ export const metadata: Metadata = {
     type: "website",
     url: "https://co-jest-grane.pl",
     title: "Co Jest Grane? 🎵 Zgadnij piosenkę po fragmencie!",
-    description: "Rozpoznasz piosenkę po krótkim fragmencie? 🎧 Zagraj za darmo! Polskie hity, zagraniczne, bajki i gry. 4 tryby, ranking i codzienne wyzwania!",
+    description: "Rozpoznasz piosenkę po krótkim fragmencie? 🎧 Zagraj za darmo! Polskie hity, zagraniczne, bajki i gry. 4 tryby i codzienne wyzwania!",
     siteName: "Co Jest Grane?",
     locale: "pl_PL",
   },
   twitter: {
     card: "summary",
     title: "Co Jest Grane? 🎵 Zgadnij piosenkę po fragmencie!",
-    description: "Rozpoznasz piosenkę po krótkim fragmencie? 🎧 Zagraj za darmo! Polskie hity, zagraniczne, bajki i gry. 4 tryby, ranking i codzienne wyzwania!",
+    description: "Rozpoznasz piosenkę po krótkim fragmencie? 🎧 Zagraj za darmo! Polskie hity, zagraniczne, bajki i gry. 4 tryby i codzienne wyzwania!",
   },
   other: {
     "apple-mobile-web-app-title": "Co Jest Grane",
@@ -60,7 +60,7 @@ const appSchema = {
   name: "Co Jest Grane?",
   url: "https://co-jest-grane.pl",
   description:
-    "Darmowa gra muzyczna online - zgadnij piosenkę po krótkim fragmencie! Polskie i zagraniczne hity, bajki, gry. 4 tryby gry, ranking graczy i codzienne wyzwania.",
+    "Darmowa gra muzyczna online - zgadnij piosenkę po krótkim fragmencie! Polskie i zagraniczne hity, bajki, gry. 4 tryby gry i codzienne wyzwania.",
   applicationCategory: "GameApplication",
   genre: "Music",
   inLanguage: "pl-PL",

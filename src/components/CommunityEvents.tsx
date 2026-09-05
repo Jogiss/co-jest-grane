@@ -2,9 +2,9 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
+import {
   X, ArrowLeft, Plus, Trash2, ChevronRight, Send, Check, XCircle,
-  Play, Pause, AlertCircle, Loader2, Shield, Music, Users, Search, Copy, 
+  Play, Pause, AlertCircle, Loader2, Shield, Music, Users, Search, Copy,
   TrendingUp, Clock, Link2, ThumbsUp, ThumbsDown, Pencil, Save
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
@@ -72,7 +72,8 @@ const CommunityEvents: React.FC<CommunityEventsProps> = ({ isOpen, onClose, user
   const [detailSongs, setDetailSongs] = useState<CommunityEventSong[]>([]);
   const [previewVideoId, setPreviewVideoId] = useState<string | null>(null);
   const [_previewStart, setPreviewStart] = useState(0);
-  const [creatorProfile, setCreatorProfile] = useState<{ nickname: string; points: number; wins: number; total_games: number } | null>(null);
+  // ZMIANA: profil twórcy bez punktów (zamiast leaderboard_view czytamy user_progress.stats)
+  const [creatorProfile, setCreatorProfile] = useState<{ nickname: string; wins: number; total_games: number } | null>(null);
   const [editingSongId, setEditingSongId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [editArtist, setEditArtist] = useState('');
@@ -86,9 +87,9 @@ const CommunityEvents: React.FC<CommunityEventsProps> = ({ isOpen, onClose, user
   const [showExistingSongs, setShowExistingSongs] = useState(false);
   const [countryDropdownIndex, setCountryDropdownIndex] = useState<number | null>(null);
 
-  const fetchActiveEvents = useCallback(async () => { 
-    try { 
-      const { data } = await supabase.from('community_events').select('*').eq('status', 'active').order('activated_at', { ascending: false }); 
+  const fetchActiveEvents = useCallback(async () => {
+    try {
+      const { data } = await supabase.from('community_events').select('*').eq('status', 'active').order('activated_at', { ascending: false });
       if (data) {
         const withCounts = await Promise.all(data.map(async (ev: any) => {
           try {
@@ -98,7 +99,7 @@ const CommunityEvents: React.FC<CommunityEventsProps> = ({ isOpen, onClose, user
         }));
         setActiveEvents(withCounts);
       }
-    } catch {} 
+    } catch {}
   }, []);
   const fetchMyEvents = useCallback(async () => { try { const { data } = await supabase.from('community_events').select('*').eq('creator_id', userId).order('created_at', { ascending: false }); if (data) setMyEvents(data); } catch {} }, [userId]);
   const fetchPendingEvents = useCallback(async () => { if (!isAdmin) return; try { const { data } = await supabase.from('community_events').select('*').in('status', ['pending_review', 'approved']).order('created_at', { ascending: false }); if (data) setPendingEvents(data); } catch {} }, [isAdmin]);
@@ -119,7 +120,7 @@ const CommunityEvents: React.FC<CommunityEventsProps> = ({ isOpen, onClose, user
   };
 
   useEffect(() => { if (isOpen) { fetchActiveEvents(); fetchMyEvents(); if (isAdmin) fetchPendingEvents(); } }, [isOpen, fetchActiveEvents, fetchMyEvents, fetchPendingEvents, isAdmin]);
-  
+
   useEffect(() => {
     if (isOpen && initialEventId) {
       (async () => {
@@ -248,7 +249,14 @@ const CommunityEvents: React.FC<CommunityEventsProps> = ({ isOpen, onClose, user
   const updateSong = (i: number, f: keyof SongFormEntry, v: string | number) => { setFormSongs(formSongs.map((s, idx) => idx === i ? { ...s, [f]: v } : s)); };
 
   const openDetail = async (ev: CommunityEvent) => { setDetailEvent(ev); await fetchEventSongs(ev.id); setView(isAdmin && (ev.status === 'pending_review' || ev.status === 'approved') ? 'admin_detail' : 'event_detail'); };
-  const openCreatorProfile = async (creatorId: string, creatorNick: string) => { try { const { data } = await supabase.from('leaderboard_view').select('points, wins, total_games').eq('user_id', creatorId).maybeSingle(); setCreatorProfile({ nickname: creatorNick, points: data?.points || 0, wins: data?.wins || 0, total_games: data?.total_games || 0 }); } catch { setCreatorProfile({ nickname: creatorNick, points: 0, wins: 0, total_games: 0 }); } };
+  // ZMIANA: zamiast leaderboard_view -> user_progress.stats ({ total, wins })
+  const openCreatorProfile = async (creatorId: string, creatorNick: string) => {
+    try {
+      const { data } = await supabase.from('user_progress').select('stats').eq('user_id', creatorId).maybeSingle();
+      const stats = (data?.stats as { total?: number; wins?: number } | null) || {};
+      setCreatorProfile({ nickname: creatorNick, wins: stats.wins || 0, total_games: stats.total || 0 });
+    } catch { setCreatorProfile({ nickname: creatorNick, wins: 0, total_games: 0 }); }
+  };
   const copyCode = (code: string) => { navigator.clipboard.writeText(code); setCodeCopied(true); setTimeout(() => setCodeCopied(false), 2000); };
   const copyLink = (code: string) => { navigator.clipboard.writeText(`${window.location.origin}${window.location.pathname}?community=${code}`); setCodeCopied(true); setTimeout(() => setCodeCopied(false), 2000); };
 
@@ -471,7 +479,8 @@ const CommunityEvents: React.FC<CommunityEventsProps> = ({ isOpen, onClose, user
           </div>)}
         </div>
       </div>
-      <AnimatePresence>{creatorProfile && (<motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setCreatorProfile(null)}><motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} onClick={(e) => e.stopPropagation()} className="bg-slate-900 border border-white/10 w-full max-w-xs rounded-3xl p-6 shadow-2xl text-center relative"><button onClick={() => setCreatorProfile(null)} className="absolute right-4 top-4 text-white/40 hover:text-white"><X size={18} /></button><div className={`w-16 h-16 rounded-full ${theme.primary} flex items-center justify-center text-white text-2xl font-black mx-auto mb-3 shadow-lg`}>{creatorProfile.nickname.charAt(0).toUpperCase()}</div><h3 className="text-xl font-black text-white uppercase">{creatorProfile.nickname}</h3><div className="grid grid-cols-3 gap-2 mt-4"><div className="bg-white/5 rounded-xl p-2 text-center"><p className="text-lg font-black text-white">{creatorProfile.total_games}</p><p className="text-[8px] text-white/40 uppercase font-bold">Gier</p></div><div className="bg-white/5 rounded-xl p-2 text-center"><p className="text-lg font-black text-green-400">{creatorProfile.wins}</p><p className="text-[8px] text-white/40 uppercase font-bold">Wygranych</p></div><div className="bg-white/5 rounded-xl p-2 text-center"><p className="text-lg font-black text-yellow-400">{creatorProfile.points.toLocaleString()}</p><p className="text-[8px] text-white/40 uppercase font-bold">Punkty</p></div></div></motion.div></motion.div>)}</AnimatePresence>
+      {/* ZMIANA: profil twórcy bez punktów/rankingu — tylko gry i wygrane z user_progress */}
+      <AnimatePresence>{creatorProfile && (<motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setCreatorProfile(null)}><motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} onClick={(e) => e.stopPropagation()} className="bg-slate-900 border border-white/10 w-full max-w-xs rounded-3xl p-6 shadow-2xl text-center relative"><button onClick={() => setCreatorProfile(null)} className="absolute right-4 top-4 text-white/40 hover:text-white"><X size={18} /></button><div className={`w-16 h-16 rounded-full ${theme.primary} flex items-center justify-center text-white text-2xl font-black mx-auto mb-3 shadow-lg`}>{creatorProfile.nickname.charAt(0).toUpperCase()}</div><h3 className="text-xl font-black text-white uppercase">{creatorProfile.nickname}</h3><div className="grid grid-cols-2 gap-2 mt-4"><div className="bg-white/5 rounded-xl p-3 text-center"><p className="text-lg font-black text-white">{creatorProfile.total_games}</p><p className="text-[8px] text-white/40 uppercase font-bold">Gier</p></div><div className="bg-white/5 rounded-xl p-3 text-center"><p className="text-lg font-black text-green-400">{creatorProfile.wins}</p><p className="text-[8px] text-white/40 uppercase font-bold">Wygranych</p></div></div></motion.div></motion.div>)}</AnimatePresence>
     </motion.div>
   );
 };

@@ -22,7 +22,7 @@ export function cleanYouTubeTitle(rawTitle: string): string {
   let title = rawTitle.trim();
   // Remove parentheses, brackets, pipe
   title = title.replace(/\([^)]*\)/g, '').replace(/\[[^\]]*\]/g, '').replace(/\|.*$/g, '');
-  // Remove "prod. XYZ", "prod XYZ", "produkcja XYZ"  
+  // Remove "prod. XYZ", "prod XYZ", "produkcja XYZ"
   title = title.replace(/\s*(?:prod\.?|produkcja|production)\s+.+$/gi, '');
   // Remove feat./ft. sections
   title = title.replace(/\s*(?:feat\.?|ft\.?|featuring)\s+.*/gi, '');

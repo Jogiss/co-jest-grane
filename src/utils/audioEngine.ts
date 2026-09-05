@@ -1,3 +1,24 @@
+interface YTPlayer {
+  destroy(): void;
+  stopVideo(): void;
+  pauseVideo(): void;
+  playVideo(): void;
+  setVolume(vol: number): void;
+}
+
+interface YTPlayerConstructor {
+  new (elementId: string, options: any): YTPlayer;
+}
+
+interface YTNamespace {
+  Player: YTPlayerConstructor;
+}
+
+interface Window {
+  YT?: YTNamespace;
+  onYouTubeIframeAPIReady?: () => void;
+}
+
 export type Category = 'Polskie' | 'Zagraniczne' | 'Bajki' | 'Gry' | 'Inne' | 'Kraj';
 export type GameMode = 'klasyczny' | 'piano' | 'beat' | 'reverse';
 
@@ -169,7 +190,7 @@ class AudioEngine {
       osc.frequency.setValueAtTime(150, this.context.currentTime);
       osc.frequency.linearRampToValueAtTime(50, this.context.currentTime + 0.2);
       g.gain.setValueAtTime(this.volume * 0.3, this.context.currentTime);
-      g.gain.linearRampToValueAtTime(0.01, this.context.currentTime + 0.2);
+      g.gain.exponentialRampToValueAtTime(0.01, this.context.currentTime + 0.2);
       osc.connect(g);
       g.connect(this.context.destination);
       osc.start();

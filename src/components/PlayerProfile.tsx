@@ -16,6 +16,8 @@ interface PlayerProfileProps {
 
 type ProfileTab = 'overview' | 'modes' | 'categories' | 'achievements';
 
+// ZMIANA: osiągnięcia rank (top100/top10/top3/top2/top1) zachowane, ale bez rankingu
+// rank przychodzi zawsze jako null — po prostu nigdy się nie odblokują.
 const ACHIEVEMENTS = [
   { id: 'first_win', name: 'Pierwsza Wygrana', desc: 'Wygraj swoją pierwszą grę', icon: '🎉', check: (s: any) => s.wins >= 1 },
   { id: 'wins_10', name: 'Dziesięć!', desc: 'Wygraj 10 gier', icon: '🔟', check: (s: any) => s.wins >= 10 },

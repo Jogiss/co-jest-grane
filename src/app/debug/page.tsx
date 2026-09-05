@@ -29,27 +29,19 @@ export default function DebugPage() {
     try {
       // Try user_progress with ANON uid
       const { data: up, error: upErr } = await supabase.from('user_progress').select('*').eq('user_id', uid).maybeSingle();
-      
-      // Try game_results with ANON uid
-      const { data: gr } = await supabase.from('game_results').select('*').eq('user_id', uid).order('created_at', { ascending: false }).limit(10);
 
       // Try ALL user_progress (find by nickname)
       const nick = localStorage.getItem('mm_nickname') || '';
       const { data: upByNick } = await supabase.from('user_progress').select('*').eq('nickname', nick).limit(5);
 
-      // Try game_results by nickname
-      const { data: grByNick } = await supabase.from('game_results').select('user_id, nickname, points, song_id, attempt, result_type, created_at').eq('nickname', nick).order('created_at', { ascending: false }).limit(20);
-
       // Try ALL user_progress entries (to find your Firebase UID)
       const { data: allUp } = await supabase.from('user_progress').select('user_id, nickname, stats, daily_streak, updated_at').order('updated_at', { ascending: false }).limit(20);
-      
+
       setSupabaseData({
         anon_uid: uid,
         nickname: nick,
         user_progress_by_uid: up || (upErr ? `Error: ${upErr.message}` : 'No data for this UID'),
-        game_results_by_uid: { count: gr?.length || 0, sample: gr?.slice(0, 3) || [] },
         user_progress_by_nickname: upByNick || 'No data',
-        game_results_by_nickname: { count: grByNick?.length || 0, sample: grByNick?.slice(0, 5) || [] },
         recent_user_progress: allUp || [],
       });
     } catch (e: any) {
@@ -62,11 +54,11 @@ export default function DebugPage() {
       const data = JSON.parse(restoreJson);
       // Check if it's completedDays directly or wrapped
       const days = data.completedDays || data;
-      
+
       // Read current progress
       let current: any = {};
       try { current = JSON.parse(localStorage.getItem('mm_progress') || '{}'); } catch {}
-      
+
       // If current is new format, merge
       if (current.completedDays !== undefined) {
         current.completedDays = { ...current.completedDays, ...days };
@@ -84,16 +76,16 @@ export default function DebugPage() {
           showStatsPanel: true,
         };
       }
-      
+
       // Recalculate stats from completedDays
       const entries = Object.values(current.completedDays) as any[];
       const total = entries.filter(v => v?.status === 'won' || v?.status === 'lost').length;
       const wins = entries.filter(v => v?.status === 'won').length;
       current.stats = { total, wins };
-      
+
       localStorage.setItem('mm_progress', JSON.stringify(current));
       localStorage.setItem('mm_stats', JSON.stringify(current.stats));
-      
+
       setRestoreStatus(`✅ Przywrócono! ${Object.keys(days).length} wyzwań, ${total} zagranych, ${wins} wygranych. Odśwież stronę!`);
     } catch (e: any) {
       setRestoreStatus(`❌ Błąd: ${e.message}`);
@@ -129,7 +121,7 @@ export default function DebugPage() {
   return (
     <div className="min-h-screen bg-slate-950 text-white p-8 font-mono text-sm">
       <h1 className="text-3xl font-black mb-8 text-yellow-400">🔧 DEBUG — Co Jest Grane?</h1>
-      
+
       <div className="space-y-8">
         {/* localStorage */}
         <section>
@@ -151,7 +143,7 @@ export default function DebugPage() {
 
         {/* Supabase */}
         <section>
-          <h2 className="text-xl font-bold text-cyan-400 mb-4">☁️ Supabase (user_progress + game_results)</h2>
+          <h2 className="text-xl font-bold text-cyan-400 mb-4">☁️ Supabase (user_progress)</h2>
           <button onClick={fetchSupabase} className="bg-cyan-600 px-4 py-2 rounded-lg font-bold mb-4">Pobierz z Supabase</button>
           {supabaseError && <p className="text-red-400">❌ {supabaseError}</p>}
           {supabaseData && (
@@ -168,8 +160,8 @@ export default function DebugPage() {
             Jeśli widzisz powyżej user_progress z danymi pod innym UID (np. Firebase UID), wklej ten UID tutaj żeby ściągnąć completedDays.
           </p>
           <div className="flex gap-3">
-            <input 
-              type="text" 
+            <input
+              type="text"
               id="restore-uid"
               placeholder="Wklej user_id z Supabase..."
               className="flex-1 bg-slate-900 border border-white/10 rounded-xl px-4 py-2 text-white text-xs focus:outline-none focus:border-pink-400"
@@ -210,8 +202,8 @@ export default function DebugPage() {
           <p className="text-white/40 text-xs mb-3">
             Wklej JSON z completedDays (stary format lub nowy). Możesz wziąć z eksportu, z Supabase user_progress.progress_data, lub z kopii zapasowej.
           </p>
-          <textarea 
-            value={restoreJson} 
+          <textarea
+            value={restoreJson}
             onChange={e => setRestoreJson(e.target.value)}
             placeholder='{"2026-06-01-klasyczny-Polskie": {"status": "won", "attempt": 2, ...}, ...}'
             className="w-full bg-slate-900 border border-white/10 rounded-xl p-4 text-white text-xs h-40 focus:outline-none focus:border-orange-400"

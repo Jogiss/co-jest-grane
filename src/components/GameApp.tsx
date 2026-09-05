@@ -7,10 +7,11 @@ import { Music, Play, RotateCcw, Volume2, Piano, Drum, ArrowLeft, VolumeX, Check
 import { motion, AnimatePresence } from 'framer-motion';
 import confetti from 'canvas-confetti';
 import { supabase } from '../lib/supabase';
-import { MovieSuggestion, GameSuggestion, searchMoviesDebounced, searchGamesDebounced } from '../utils/suggestions';
+import { MovieSuggestion, GameSuggestion, searchMoviesDebounced } from '../utils/suggestions';
 import { searchGamesLocalDebounced, preloadGameSuggestions } from '../utils/gameSuggestions';
 import { SongSuggestion, searchSongsDebounced, preloadSongSuggestions } from '../utils/songSearch';
 import { COUNTRIES, COUNTRY_CONTINENTS } from '../data/countries';
+import { syncPeriodScores, fetchTopScores, fetchMyRank, computeLocalPeriodPoints, computePeriodPointsFor, getPeriodLabel, getPastPeriods, getPeriodKeys, recordDailyReward, type PeriodType, type TopEntry } from '../utils/periodLeaderboard';
 import PlayerProfile from './PlayerProfile';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
 import AuthModal from './AuthModal';
@@ -120,10 +121,13 @@ const GameAppInner: React.FC = () => {
   const [streak, setStreak] = useState(0);
   const [nickError, setNickError] = useState<string | null>(null);
   const [globalStats, setGlobalStats] = useState<number[]>([0, 0, 0, 0, 0, 0, 0]);
-  const [leaderboard, setLeaderboard] = useState<{username: string, score: number, rank: number, odwiedza: string, wins: number, total_games: number}[]>([]);
-  const [leaderboardTab, setLeaderboardTab] = useState<10 | 100 | 500>(10);
-  const [topPlayers, setTopPlayers] = useState<{nickname: string, points: number}[]>([]);
-  const [activeModal, setActiveModal] = useState<'none' | 'tos' | 'privacy' | 'contact' | 'leaderboard' | 'howtoplay' | 'feedback'>('none');
+  // Lekki ranking okresowy (1 wiersz/gracz/okres) — zastąpił ciężki globalny ranking
+  const [activeModal, setActiveModal] = useState<'none' | 'tos' | 'privacy' | 'contact' | 'howtoplay' | 'feedback' | 'leaderboard'>('none');
+  const [topPlayers, setTopPlayers] = useState<TopEntry[]>([]);
+  const [leaderboardTab, setLeaderboardTab] = useState<PeriodType>('week');
+  const [boardPeriod, setBoardPeriod] = useState<string>('');
+  const [myPeriodRank, setMyPeriodRank] = useState<number | null>(null);
+  const [loadingBoard, setLoadingBoard] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [pinnedAchievements, setPinnedAchievements] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem('mm_pinned_achievements') || '[]'); } catch { return []; }
@@ -166,12 +170,23 @@ const GameAppInner: React.FC = () => {
   const [eventFilter, setEventFilter] = useState<'all' | 'done' | 'started' | 'new'>('all');
   const [selectedEvent, setSelectedEvent] = useState<GameEvent | null>(null);
   const [eventSongs, setEventSongs] = useState<EventSong[]>([]);
-  const [playerRank, setPlayerRank] = useState<number | null>(null);
-  const [playerPoints, setPlayerPoints] = useState(0);
   const [achievementPopup, setAchievementPopup] = useState<{ name: string, icon: string } | null>(null);
-  const [viewingPlayer, setViewingPlayer] = useState<{ nickname: string, points: number, wins: number, total_games: number, rank: number, odwiedza: string } | null>(null);
   const [onlinePlayers, setOnlinePlayers] = useState(1);
   const [ankietaLink, setAnkietaLink] = useState<string | null>(null);
+
+  // ZMIANA: punkty liczone lokalnie z completedDays (zamiast leaderboard_view)
+  const playerPoints = React.useMemo(() => {
+    const BASE_POINTS = [100, 80, 60, 40, 20, 10];
+    return Object.values(completedDays).reduce((sum, day) => {
+      if (!day) return sum;
+      let pts = day.partialPoints || 0;
+      if (day.status === 'won') {
+        const idx = Math.min(Math.max(day.attempt, 1), 6) - 1;
+        pts += BASE_POINTS[idx];
+      }
+      return sum + pts;
+    }, 0);
+  }, [completedDays]);
 
   useEffect(() => {
     if (progress.theme && progress.theme in themeConfig) setTheme(progress.theme as Theme);
@@ -194,23 +209,14 @@ const GameAppInner: React.FC = () => {
     else if (lastDailyReward === today) { setShowDailyReward(false); return; }
     const isWeeklyBonus = newStreak > 0 && newStreak % 7 === 0;
     const reward = DAILY_REWARD_BASE + (isWeeklyBonus ? WEEKLY_BONUS : 0);
+    // Bez zapisu do game_results (ranking usunięty) — nagroda liczy się lokalnie,
+    // ale wchodzi do rankingu tygodnia/miesiąca.
     await updateProgress({ dailyStreak: newStreak, lastDailyReward: today });
+    recordDailyReward(today, reward);
     setShowDailyReward(false);
-    const currentId = userIdRef.current; const currentNick = nicknameRef.current;
-    if (currentId) {
-      try {
-        await supabase.from('game_results').insert([{
-          user_id: currentId,
-          nickname: currentNick.trim(),
-          points: reward,
-          is_win: false,
-          result_type: 'daily_reward',
-        }]);
-      } catch (e) { console.error("Daily reward save error:", e); }
-    }
     audioEngine.playUiSuccess();
     confetti({ particleCount: 50, spread: 40, origin: { y: 0.3, x: 0.9 } });
-    setTimeout(() => fetchPlayerRank(), 500);
+    void syncPeriodScores(userIdRef.current, nicknameRef.current, completedDays, true);
   };
 
   const fetchGlobalStats = async (songId: string) => {
@@ -225,9 +231,6 @@ const GameAppInner: React.FC = () => {
       setGlobalStats(counts);
     } catch { setGlobalStats([0, 0, 0, 0, 0, 0, 0]); }
   };
-
-  const oldAnonUid = typeof window !== 'undefined' ? (localStorage.getItem('mm_uid') || '') : '';
-  const allMyIds = [userId, oldAnonUid].filter(Boolean);
 
   const containsBannedWord = (text: string): boolean => {
     const BANNED_WORDS = ['cwel','kurwa','kurw','chuj','chuja','cipa','cipka','jebac','jebać','jebany','pierdol','szmata','dziwka','suka','pedal','pedał','frajer','nigger','niger','nigga','hitler','nazi','heil','faggot','retard','fuck','shit','bitch','asshole','dick','pussy','whore','slut','kurwy','chuje','pierdole','jeban','wypierdal','spierdalaj','debil','idiota','pojeb'];
@@ -247,49 +250,16 @@ const GameAppInner: React.FC = () => {
     return false;
   };
 
-  const recordResultGlobal = async (songId: string, attemptNum: number, partialPts: number = 0) => {
+  const recordResultGlobal = async (songId: string, attemptNum: number) => {
     if (isRateLimited()) { console.warn('Rate limited - too many results'); return; }
-    const currentUserId = userIdRef.current; const currentNick = nicknameRef.current;
+    const currentNick = nicknameRef.current;
     try {
       const dbAttempt = (attemptNum === 0 || attemptNum > 6) ? 7 : attemptNum;
       await supabase.from('wyniki').insert([{ song_id: songId, attempt: dbAttempt }]);
+      // ZMIANA: bez zapisu do game_results (ranking usunięty)
       let cleanNick = currentNick.trim();
       if (!cleanNick || containsBannedWord(cleanNick)) { cleanNick = `Gracz${Math.floor(10000 + Math.random() * 90000)}`; setNickname(cleanNick); }
-      const basePoints = (attemptNum >= 1 && attemptNum <= 6) ? [100, 80, 60, 40, 20, 10][attemptNum - 1] : 0;
-      const totalPoints = basePoints + partialPts;
-      const isWin = attemptNum >= 1 && attemptNum <= 6;
-      if (!currentUserId) return;
-      await supabase.from('game_results').insert([{
-        user_id: currentUserId,
-        nickname: cleanNick,
-        song_id: songId,
-        attempt: dbAttempt,
-        points: totalPoints,
-        is_win: isWin,
-        result_type: 'game',
-      }]);
-      setTimeout(() => fetchPlayerRank(), 500);
-    } catch (e) { console.error("[POINTS] Database save error:", e); }
-  };
-
-  const isMyLeaderboardEntry = (entryUserId: string): boolean => allMyIds.includes(entryUserId);
-
-  const fetchPlayerRank = async () => {
-    const currentUid = userIdRef.current; const anonUid = typeof window !== 'undefined' ? (localStorage.getItem('mm_uid') || '') : '';
-    const myIds = [currentUid, anonUid].filter(Boolean);
-    if (myIds.length === 0) return;
-    try {
-      for (const id of myIds) {
-        const { data } = await supabase.from('leaderboard_view').select('points, wins, total_games').eq('user_id', id).maybeSingle();
-        if (data) {
-          setPlayerPoints(data.points || 0);
-          const { count } = await supabase.from('leaderboard_view').select('*', { count: 'exact', head: true }).gt('points', data.points || 0);
-          setPlayerRank((count || 0) + 1);
-          return;
-        }
-      }
-      setPlayerPoints(0); setPlayerRank(null);
-    } catch { /* noop */ }
+    } catch (e) { console.error("[STATS] Database save error:", e); }
   };
 
   const ACHIEVEMENT_DEFS = [
@@ -321,7 +291,7 @@ const GameAppInner: React.FC = () => {
     sorted.forEach(([, v]) => { if (v.status === 'won') { cur++; bestStreak = Math.max(bestStreak, cur); } else { cur = 0; } });
     const modesWon = (['klasyczny', 'piano', 'beat', 'reverse']).filter(mode => finished.some(([key, v]) => key.includes(`-${mode}-`) && v.status === 'won')).length;
     const catsWon = (['Polskie', 'Zagraniczne', 'Bajki', 'Gry']).filter(cat => finished.some(([key, v]) => key.endsWith(`-${cat}`) && v.status === 'won')).length;
-    return { total: stats.total, wins: stats.wins, firstTryWins, bestStreak, dailyStreak, modesWon, catsWon, rank: playerRank };
+    return { total: stats.total, wins: stats.wins, firstTryWins, bestStreak, dailyStreak, modesWon, catsWon };
   };
 
   const checkNewAchievements = async () => {
@@ -335,17 +305,52 @@ const GameAppInner: React.FC = () => {
     }
   };
 
-  const openProfile = () => { fetchPlayerRank(); setShowProfile(true); };
+  const openProfile = () => { setShowProfile(true); };
 
-  const fetchLeaderboard = async (tab: 10 | 100 | 500 = 10) => {
-    try {
-      const ranges: Record<number, { from: number; to: number }> = { 10: { from: 0, to: 10 }, 100: { from: 10, to: 100 }, 500: { from: 100, to: 500 } };
-      const range = ranges[tab];
-      const { data, error } = await supabase.from('leaderboard_view').select('nickname, points, user_id, wins, total_games').order('points', { ascending: false }).range(range.from, range.to - 1);
-      if (error) { setLeaderboard([]); return; }
-      if (data) setLeaderboard(data.map((d: any, i: number) => ({ username: d.nickname, score: d.points, rank: range.from + i + 1, odwiedza: d.user_id, wins: d.wins || 0, total_games: d.total_games || 0 })));
-      else setLeaderboard([]);
-    } catch { setLeaderboard([]); }
+  // Punkty w bieżącym tygodniu/miesiącu — liczone lokalnie, bez zapytań do bazy
+  const myPeriodPoints = React.useMemo(
+    () => computeLocalPeriodPoints(completedDays),
+    [completedDays]
+  );
+
+  // Punkty na mojej karcie — zależnie od wybranego okresu (bieżący/archiwum)
+  const myShownPoints = (tab: PeriodType) => {
+    const keys = getPeriodKeys();
+    const curKey = tab === 'week' ? keys.week : keys.month;
+    const key = boardPeriod || curKey;
+    if (key === curKey) {
+      return Math.max(
+        tab === 'week' ? myPeriodPoints.week.points : myPeriodPoints.month.points,
+        topPlayers.find(p => p.user_id === userId)?.points ?? 0
+      );
+    }
+    return computePeriodPointsFor(tab, key, completedDays).points;
+  };
+
+  const loadLeaderboard = React.useCallback(async (tab: PeriodType, periodKey?: string) => {
+    setLoadingBoard(true);
+    const keys = getPeriodKeys();
+    const key = periodKey ?? (tab === 'week' ? keys.week : keys.month);
+    const isCurrent = key === (tab === 'week' ? keys.week : keys.month);
+    // synchronizuj swój wynik tylko dla bieżącego okresu
+    if (isCurrent) await syncPeriodScores(userIdRef.current, nicknameRef.current, completedDays, true).catch(() => {});
+    const top = await fetchTopScores(tab, 10, key);
+    setTopPlayers(top);
+    const local = isCurrent
+      ? (tab === 'week' ? myPeriodPoints.week.points : myPeriodPoints.month.points)
+      : computePeriodPointsFor(tab, key, completedDays).points;
+    const fromBoard = top.find(p => p.user_id === userIdRef.current)?.points ?? 0;
+    const mine = Math.max(local, fromBoard);
+    setMyPeriodRank(await fetchMyRank(tab, mine, key));
+    setLoadingBoard(false);
+  }, [myPeriodPoints, completedDays]);
+
+  const openLeaderboard = (tab: PeriodType = leaderboardTab) => {
+    setLeaderboardTab(tab);
+    const keys = getPeriodKeys();
+    setBoardPeriod(tab === 'week' ? keys.week : keys.month);
+    setActiveModal('leaderboard');
+    void loadLeaderboard(tab);
   };
 
   useEffect(() => {
@@ -364,9 +369,12 @@ const GameAppInner: React.FC = () => {
     const trimmed = nickname.trim();
     if (!trimmed) { setNickname(`Gracz${Math.floor(1000 + Math.random() * 9000)}`); setNickError(null); return; }
     if (containsBannedWord(trimmed)) { setNickError('Nick zawiera niedozwolone słowa!'); return; }
-    const { data } = await supabase.from('leaderboard_view').select('user_id').eq('nickname', trimmed).neq('user_id', userId).limit(1);
-    if (data && data.length > 0) setNickError('Ten nick jest już zajęty!');
-    else setNickError(null);
+    // ZMIANA: sprawdzanie zajętości nicka przez user_progress (zamiast leaderboard_view)
+    try {
+      const { data } = await supabase.from('user_progress').select('user_id').eq('nickname', trimmed).neq('user_id', userId).limit(1);
+      if (data && data.length > 0) setNickError('Ten nick jest już zajęty!');
+      else setNickError(null);
+    } catch { setNickError(null); }
   };
 
   const toggleStatsPanel = async () => { await updateProgress({ showStatsPanel: !showStatsPanel }); };
@@ -379,8 +387,15 @@ const GameAppInner: React.FC = () => {
     if (status !== 'playing' && (!completedDays[dayKey] || completedDays[dayKey].status === 'playing')) {
       newStats = { total: stats.total + 1, wins: status === 'won' ? stats.wins + 1 : stats.wins };
     }
-    const newCompletedDays = { ...completedDays, [dayKey]: { status, attempt: currentAttempt, history: currentHistory, feedback: status !== 'playing' ? { title: true, artist: true } : currentFeedback, partialPoints: partialPts } };
+    const newCompletedDays = { ...completedDays, [dayKey]: { status, attempt: currentAttempt, history: currentHistory, feedback: status !== 'playing' ? { title: true, artist: true } : currentFeedback, partialPoints: partialPts, ts: Date.now() } };
     await updateProgress({ stats: newStats, completedDays: newCompletedDays });
+    // Ranking okresowy: wysyłamy po zakończonej grze i odświeżamy TOP 10
+    if (status !== 'playing') {
+      void syncPeriodScores(userIdRef.current, nicknameRef.current, newCompletedDays, true)
+        .then(() => fetchTopScores('week', 10))
+        .then(setTopPlayers)
+        .catch(() => {});
+    }
   };
 
   useEffect(() => {
@@ -420,8 +435,8 @@ const GameAppInner: React.FC = () => {
       } catch {}
     };
     fetchGlobalAlert();
-    const fetchTop3 = async () => { try { const { data } = await supabase.from('leaderboard_view').select('nickname, points').order('points', { ascending: false }).limit(3); if (data) setTopPlayers(data.map((d: any) => ({ nickname: d.nickname, points: d.points }))); } catch {} };
-    fetchTop3();
+    // Lekki ranking: jedno zapytanie o TOP 10 tygodnia przy starcie
+    fetchTopScores('week', 10).then(setTopPlayers).catch(() => {});
     preloadSongSuggestions(); preloadGameSuggestions();
     const fetchEvents = async () => {
       try {
@@ -449,10 +464,26 @@ const GameAppInner: React.FC = () => {
       } catch (e) { console.error('Ankieta error:', e); }
     };
     fetchAnkieta();
-    setTimeout(() => fetchPlayerRank(), 2000);
     setTimeout(() => checkNewAchievements(), 3000);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Po wczytaniu postępów: wyślij swój wynik okresowy (obejmuje gry sprzed
+  // wprowadzenia rankingu — liczone z dat w kluczach completedDays).
+  const didInitialSyncRef = React.useRef(false);
+  useEffect(() => {
+    if (didInitialSyncRef.current) return;
+    if (!userId || (nickname || '').trim().length < 2) return;
+    if (Object.keys(completedDays).length === 0) return;
+    didInitialSyncRef.current = true;
+    const t = setTimeout(() => {
+      void syncPeriodScores(userId, nickname, completedDays, true)
+        .then(() => fetchTopScores('week', 10))
+        .then(setTopPlayers)
+        .catch(() => {});
+    }, 2500);
+    return () => clearTimeout(t);
+  }, [userId, nickname, completedDays]);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [playProgress, setPlayProgress] = useState(0);
@@ -507,10 +538,11 @@ const GameAppInner: React.FC = () => {
         resultBufferRef.current = await audioEngine.loadFromUrl(currentSong.audioUrl);
         setResultDuration(resultBufferRef.current.duration);
         const buffer = resultBufferRef.current;
-        const ctx = (audioEngine as any).context as AudioContext;
+        const ctx = audioEngine.context as AudioContext | null;
         if (!ctx || !buffer) return;
         if (ctx.state === 'suspended') ctx.resume();
-        const gainNode = (audioEngine as any).gainNode as GainNode;
+        const gainNode = audioEngine.gainNode as GainNode | null;
+        if (!gainNode) return;
         const source = ctx.createBufferSource();
         source.buffer = buffer;
         source.connect(gainNode);
@@ -592,6 +624,24 @@ const GameAppInner: React.FC = () => {
   const exitToMenu = () => { stopMusic(); stopResultPlayer(); destroyYtPlayer(); audioEngine.playUiClick(); clearEventState(); setView('menu'); };
   const pendingCommunityEventRef = React.useRef<string | null>(null);
 
+  // Opens creator event detail with a FRESH song load.
+  // (Fix: goToCalendar used to clear eventSongs but leave selectedEvent set → "Wyzwania pojawią się wkrótce!")
+  const openEventDetail = async (ev: GameEvent) => {
+    const requestId = ++eventLoadRequestRef.current;
+    setSelectedEvent(ev);
+    setEventSongs([]);
+    activeEventSongsRef.current = [];
+    try {
+      const { data } = await supabase.from('event_songs').select('*').eq('event_slug', ev.slug);
+      if (requestId !== eventLoadRequestRef.current || !data) return;
+      const ordered = [...data].sort((a: any, b: any) => (a.date || a.id).toString().localeCompare((b.date || b.id).toString()));
+      activeEventContextSlugRef.current = ev.slug;
+      activeEventNameRef.current = ev.name;
+      setEventSongs(ordered);
+      activeEventSongsRef.current = ordered;
+    } catch {}
+  };
+
   const goToCalendar = () => {
     stopMusic(); stopResultPlayer(); destroyYtPlayer(); audioEngine.playUiClick();
     if (activeEventSlug?.startsWith('community-')) {
@@ -601,7 +651,15 @@ const GameAppInner: React.FC = () => {
       setView('menu');
       setShowCommunity(true);
     }
-    else if (activeEventSlug) { clearEventState(); setView('menu'); setShowEvents(true); }
+    else if (activeEventSlug) {
+      // Wracamy do TEGO SAMEGO eventu twórcy ze świeżym załadowaniem wyzwań
+      const ev = events.find(e => e.slug === activeEventSlug);
+      clearEventState();
+      setView('menu');
+      if (ev) void openEventDetail(ev);
+      else setSelectedEvent(null);
+      setShowEvents(true);
+    }
     else setView('calendar');
   };
 
@@ -616,10 +674,11 @@ const GameAppInner: React.FC = () => {
         setResultDuration(resultBufferRef.current.duration);
       }
       const buffer = resultBufferRef.current;
-      const ctx = (audioEngine as any).context as AudioContext;
+      const ctx = audioEngine.context as AudioContext | null;
       if (!ctx || !buffer) return;
       if (ctx.state === 'suspended') ctx.resume();
-      const gainNode = (audioEngine as any).gainNode as GainNode;
+      const gainNode = audioEngine.gainNode as GainNode | null;
+      if (!gainNode) return;
       const source = ctx.createBufferSource();
       source.buffer = buffer;
       source.connect(gainNode);
@@ -644,7 +703,7 @@ const GameAppInner: React.FC = () => {
 
   const normalizeText = (text: string) => {
     if (!text) return "";
-    return text.toLowerCase().replace(/ą/g,'a').replace(/ć/g,'c').replace(/ę/g,'e').replace(/ł/g,'l').replace(/ń/g,'n').replace(/ó/g,'o').replace(/ś/g,'s').replace(/ź/g,'z').replace(/ż/g,'z').normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9\s]/g,"").replace(/\s+/g," ").trim();
+    return text.toLowerCase().replace(/ą/g,'a').replace(/ć/g,'c').replace(/ę/g,'e').replace(/ł/g,'l').replace(/ń/g,'n').replace(/ó/g,'o').replace(/ś/g,'s').replace(/ź/g,'z').replace(/ż/g,'z').normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9\s]/g,"").replace(/\s+/g," ").trim();
   };
 
   const getLevenshteinDistance = (a: string, b: string): number => {
@@ -755,12 +814,13 @@ const GameAppInner: React.FC = () => {
         });
       }
       else if (effectiveCat === 'Gry') {
+        // Tylko lokalne podpowiedzi (tabela game_suggestions) — RAWG wyłączony,
+        // oszczędza transfer Edge Functions.
         searchGamesLocalDebounced(cleaned, (localResults: GameSuggestion[]) => {
           const combined = mergeSortTitles(evResults.games, localResults);
           setGameSuggestions(combined);
           setShowSuggestions(combined.length > 0);
         });
-        searchGamesDebounced(cleaned, (rawgResults: GameSuggestion[]) => { if (rawgResults.length > 0) { setGameSuggestions(prev => mergeSortTitles(prev, rawgResults)); setShowSuggestions(true); } });
       }
       else if (effectiveCat === 'Inne') {
         if (cleaned.trim().length >= 3) {
@@ -903,7 +963,7 @@ const GameAppInner: React.FC = () => {
     const updatedHistory = [...history, { title: "POMINIĘTO", artist: "", status: 'skipped' as const }];
     setHistory(updatedHistory);
     if (attempt < 5) { setAttempt(prev => prev + 1); setGuessTitle(''); setGuessArtist(''); saveSession('playing', attempt + 1, updatedHistory, feedback, partialPointsEarned); }
-    else { setGameStatus('lost'); saveSession('lost', attempt + 1, updatedHistory, feedback, partialPointsEarned); if (currentSong) recordResultGlobal(currentSong.id, 7, partialPointsEarned); setTimeout(() => setView('result'), 2000); }
+    else { setGameStatus('lost'); saveSession('lost', attempt + 1, updatedHistory, feedback, partialPointsEarned); if (currentSong) recordResultGlobal(currentSong.id, 7); setTimeout(() => setView('result'), 2000); }
   };
 
   const handleGuess = () => {
@@ -929,7 +989,7 @@ const GameAppInner: React.FC = () => {
       const finalHistory = [...history, { title: `${displayTitle} — ${displayArtist}`, artist: "", status: 'correct' as const }];
       setHistory(finalHistory); setGameStatus('won'); setStreak(prev => prev + 1);
       saveSession('won', attempt + 1, finalHistory, { title: true, artist: true }, newPartialPoints);
-      if (currentSong) recordResultGlobal(currentSong.id, attempt + 1, newPartialPoints);
+      if (currentSong) recordResultGlobal(currentSong.id, attempt + 1);
       audioEngine.playUiSuccess(); confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } });
       setTimeout(() => setView('result'), 2000); return;
     }
@@ -940,7 +1000,7 @@ const GameAppInner: React.FC = () => {
     const updatedHistory = [...history, { title: historyDisplay, artist: "", status: (isPartiallyCorrect ? 'partial' : 'wrong') as 'partial' | 'wrong' }];
     setHistory(updatedHistory);
     if (attempt < 5) { setAttempt(prev => prev + 1); setGuessTitle(''); setGuessArtist(''); saveSession('playing', attempt + 1, updatedHistory, updatedFeedback, newPartialPoints); if (!isPartiallyCorrect) audioEngine.playUiError(); }
-    else { setGameStatus('lost'); setStreak(0); saveSession('lost', attempt + 1, updatedHistory, updatedFeedback, newPartialPoints); if (currentSong) recordResultGlobal(currentSong.id, 7, newPartialPoints); audioEngine.playUiError(); setTimeout(() => setView('result'), 2000); }
+    else { setGameStatus('lost'); setStreak(0); saveSession('lost', attempt + 1, updatedHistory, updatedFeedback, newPartialPoints); if (currentSong) recordResultGlobal(currentSong.id, 7); audioEngine.playUiError(); setTimeout(() => setView('result'), 2000); }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => { if (e.key === 'Enter') handleGuess(); };
@@ -974,15 +1034,12 @@ const GameAppInner: React.FC = () => {
     setView('calendar');
   };
 
-  // ===== SIMPLIFIED RENDER FOR BUILD =====
-  // The full render functions are below
-
   return (
     <div className={`min-h-screen bg-slate-950 bg-[radial-gradient(circle_at_top,_var(--tw-gradient-stops))] ${currentTheme.gradient} via-slate-950 to-black flex items-center justify-center overflow-x-hidden font-sans text-slate-100`}>
       <AnimatePresence>
         {globalAlert && !globalAlertDismissed && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/90 backdrop-blur-xl">
-            <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-slate-900 border-2 border-yellow-500/50 w-full max-w-lg rounded-3xl p-8 shadow-[0_0_60px_rgba(250,204,21,0.2)] text-center relative">
+            <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className={`bg-slate-900 border-2 w-full max-w-lg rounded-3xl p-8 text-center relative ${globalAlert.typ === 'error' ? 'border-red-500/60 shadow-[0_0_70px_rgba(239,68,68,0.35)]' : globalAlert.typ === 'warning' ? 'border-yellow-500/50 shadow-[0_0_60px_rgba(250,204,21,0.2)]' : `${currentTheme.border}/50 shadow-2xl`}`}>
               <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-5 shadow-lg ${globalAlert.typ === 'error' ? 'bg-red-600' : globalAlert.typ === 'warning' ? 'bg-yellow-600' : 'bg-indigo-600'}`}>
                 {globalAlert.typ === 'error' ? <AlertTriangle size={40} className="text-white" /> : <span className="text-4xl">{globalAlert.emoji || '📢'}</span>}
               </div>
@@ -997,11 +1054,11 @@ const GameAppInner: React.FC = () => {
             <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="bg-slate-900 border border-white/10 w-full max-w-sm rounded-3xl p-8 shadow-2xl text-center">
               <div className={`w-20 h-20 rounded-full ${currentTheme.primary} flex items-center justify-center text-white text-4xl mx-auto mb-4 shadow-lg`}>🎵</div>
               <h2 className="text-2xl font-black text-white mb-2">Witaj w Co Jest Grane!</h2>
-              <p className="text-white/40 text-sm mb-6">Zgaduj piosenki po fragmencie i rywalizuj z innymi!</p>
+              <p className="text-white/40 text-sm mb-6">Zgaduj piosenki po fragmencie i odblokowuj osiągnięcia!</p>
               <div className="mb-4">
                 <label className="text-white/40 text-xs font-bold uppercase tracking-widest block mb-2">Twój nick w grze</label>
                 <input type="text" value={welcomeNick} onChange={(e) => setWelcomeNick(e.target.value.slice(0, 15))} placeholder="Wpisz nick..." maxLength={15} autoFocus className="w-full bg-white/5 border border-white/10 rounded-xl py-3 px-4 text-white text-center text-lg placeholder:text-white/20 focus:border-white/30 focus:outline-none" onKeyDown={(e) => { if (e.key === 'Enter' && welcomeNick.trim().length >= 2) { setNickname(welcomeNick.trim()); localStorage.setItem('mm_welcomed', '1'); setShowWelcome(false); } }} />
-                <p className="text-white/20 text-[9px] mt-2">Min. 2 znaki, widoczny w rankingu</p>
+                <p className="text-white/20 text-[9px] mt-2">Min. 2 znaki, widoczny w grze</p>
               </div>
               <button onClick={() => { if (welcomeNick.trim().length >= 2) setNickname(welcomeNick.trim()); localStorage.setItem('mm_welcomed', '1'); setShowWelcome(false); }} className={`w-full ${currentTheme.primary} ${currentTheme.hover} text-white py-3 rounded-xl font-bold text-lg transition-all`}>{welcomeNick.trim().length >= 2 ? 'ZACZYNAMY!' : 'POMIŃ'}</button>
             </motion.div>
@@ -1157,21 +1214,7 @@ const GameAppInner: React.FC = () => {
                         const evDone = evTotal > 0 && evPlayed >= evTotal;
                         const evPct = evTotal > 0 ? Math.round((evWon / evTotal) * 100) : 0;
                         return (
-                        <button key={ev.id} onClick={async () => {
-                          const requestId = ++eventLoadRequestRef.current;
-                          setSelectedEvent(ev);
-                          setEventSongs([]);
-                          activeEventSongsRef.current = [];
-                          try {
-                            const { data } = await supabase.from('event_songs').select('*').eq('event_slug', ev.slug);
-                            if (requestId !== eventLoadRequestRef.current || !data) return;
-                            const ordered = [...data].sort((a: any, b: any) => (a.date || a.id).toString().localeCompare((b.date || b.id).toString()));
-                            activeEventContextSlugRef.current = ev.slug;
-                            activeEventNameRef.current = ev.name;
-                            setEventSongs(ordered);
-                            activeEventSongsRef.current = ordered;
-                          } catch {}
-                        }}
+                        <button key={ev.id} onClick={() => openEventDetail(ev)}
                           className={`relative bg-gradient-to-br ${evDone ? 'from-green-500/10 to-emerald-500/5 border-green-500/30 hover:border-green-500/50' : ev.color ? '' : 'from-yellow-500/10 to-orange-500/5 border-yellow-500/20 hover:border-yellow-500/40'} border rounded-3xl p-6 text-left transition-all group overflow-hidden`}
                           style={!evDone && ev.color ? { background: `linear-gradient(135deg, ${ev.color}15, ${ev.color}05)`, borderColor: `${ev.color}30` } : undefined}>
                           {evTotal > 0 && <div className={`absolute top-3 right-3 text-[10px] font-black px-2.5 py-1 rounded-full border z-20 ${evDone ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'}`}>{evPlayed}/{evTotal}</div>}
@@ -1203,7 +1246,7 @@ const GameAppInner: React.FC = () => {
             </div>
           </motion.div>
         )}
-        {showProfile && <PlayerProfile nickname={nickname} stats={stats} completedDays={completedDays} dailyStreak={dailyStreak} theme={currentTheme} playerRank={playerRank} playerPoints={playerPoints} pinnedAchievements={pinnedAchievements} onPinAchievement={handlePinAchievement} onClose={() => setShowProfile(false)} />}
+        {showProfile && <PlayerProfile nickname={nickname} stats={stats} completedDays={completedDays} dailyStreak={dailyStreak} theme={currentTheme} playerRank={null} playerPoints={playerPoints} pinnedAchievements={pinnedAchievements} onPinAchievement={handlePinAchievement} onClose={() => setShowProfile(false)} />}
         {showDailyReward && (
           <motion.div initial={{ opacity: 0, x: 100 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 100 }} className="fixed bottom-4 right-4 md:bottom-8 md:right-8 z-[100]">
             <button onClick={claimDailyReward} className="bg-gradient-to-r from-yellow-600 to-amber-600 border-2 border-yellow-400/50 rounded-2xl p-4 shadow-[0_0_30px_rgba(250,204,21,0.3)] flex items-center gap-3 group">
@@ -1229,55 +1272,74 @@ const GameAppInner: React.FC = () => {
                 </div>
               )}
               {activeModal === 'leaderboard' && (
-                <div className="w-full">
-                  {viewingPlayer ? (
-                    <div className="space-y-5">
-                      <button onClick={() => setViewingPlayer(null)} className="flex items-center gap-2 text-white/40 hover:text-white transition-colors text-sm font-bold"><ArrowLeft size={16}/> Powrót</button>
-                      <div className="text-center">
-                        <div className={`w-20 h-20 rounded-full ${currentTheme.primary} flex items-center justify-center text-white text-3xl font-black mx-auto mb-3`}>{viewingPlayer.nickname.charAt(0).toUpperCase()}</div>
-                        <h3 className="text-2xl font-black text-white uppercase">{viewingPlayer.nickname}</h3>
-                        <p className="text-yellow-500 font-bold text-sm mt-1">🏆 #{viewingPlayer.rank}</p>
+                <div className="space-y-5">
+                  <div className="text-center">
+                    <h2 className="text-3xl font-black text-white uppercase">🏆 TOP 10</h2>
+                    <p className="text-white/40 text-xs mt-1">Ranking resetuje się co {leaderboardTab === 'week' ? 'tydzień' : 'miesiąc'} — każdy ma szansę!</p>
+                  </div>
+                  <div className="flex justify-center gap-2">
+                    {(['week', 'month'] as const).map(t => (
+                      <button key={t} onClick={() => { setLeaderboardTab(t); const k = getPeriodKeys(); setBoardPeriod(t === 'week' ? k.week : k.month); void loadLeaderboard(t); }} className={`px-5 py-2 rounded-xl font-bold text-sm transition-all ${leaderboardTab === t ? `${currentTheme.primary} text-white` : 'bg-white/10 text-white/50 hover:bg-white/20'}`}>{t === 'week' ? '📅 Tydzień' : '🗓️ Miesiąc'}</button>
+                    ))}
+                  </div>
+
+                  {/* ARCHIWUM: wybór okresu (bieżący + 6 poprzednich) */}
+                  {(() => {
+                    const periods = getPastPeriods(leaderboardTab, 6);
+                    const selected = periods.find(o => o.key === boardPeriod) ?? periods[0];
+                    return (
+                      <div className="flex flex-col items-center gap-1.5">
+                        <select value={selected?.key ?? ''} onChange={e => { setBoardPeriod(e.target.value); void loadLeaderboard(leaderboardTab, e.target.value); }} className="bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white text-xs font-bold focus:outline-none cursor-pointer max-w-full">
+                          {periods.map(o => (<option key={o.key} value={o.key}>{o.label}{o.current ? ' — na żywo' : ' — zakończony'}</option>))}
+                        </select>
+                        {selected && (selected.current
+                          ? <span className="bg-green-500/20 text-green-400 px-2.5 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest">Ranking trwa</span>
+                          : <span className="bg-white/10 text-white/40 px-2.5 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest">Zakończony — archiwum</span>)}
                       </div>
-                      <div className={`bg-gradient-to-r ${currentTheme.gradient} to-transparent border ${currentTheme.border}/30 rounded-2xl p-5 text-center`}>
-                        <p className="text-white/40 text-[9px] uppercase font-bold tracking-widest mb-1">Łączne punkty</p>
-                        <p className="text-3xl font-black text-white">{viewingPlayer.points.toLocaleString()}</p>
-                      </div>
-                      <div className="grid grid-cols-3 gap-3">
-                        <div className="bg-white/5 border border-white/10 rounded-xl p-3 text-center"><p className="text-xl font-black text-white">{viewingPlayer.total_games}</p><p className="text-[8px] text-white/40 uppercase font-bold mt-0.5">Gier</p></div>
-                        <div className="bg-white/5 border border-white/10 rounded-xl p-3 text-center"><p className="text-xl font-black text-green-400">{viewingPlayer.wins}</p><p className="text-[8px] text-white/40 uppercase font-bold mt-0.5">Wygranych</p></div>
-                        <div className="bg-white/5 border border-white/10 rounded-xl p-3 text-center"><p className={`text-xl font-black ${viewingPlayer.total_games > 0 ? (viewingPlayer.wins / viewingPlayer.total_games * 100) >= 60 ? 'text-green-400' : (viewingPlayer.wins / viewingPlayer.total_games * 100) >= 30 ? 'text-yellow-400' : 'text-red-400' : 'text-white/40'}`}>{viewingPlayer.total_games > 0 ? Math.round((viewingPlayer.wins / viewingPlayer.total_games) * 100) : 0}%</p><p className="text-[8px] text-white/40 uppercase font-bold mt-0.5">Skuteczność</p></div>
-                      </div>
-                      <div className="bg-white/5 border border-white/10 rounded-xl p-3 text-center">
-                        <p className="text-lg font-black text-white">{viewingPlayer.total_games > 0 ? (viewingPlayer.total_games - viewingPlayer.wins) : 0}</p>
-                        <p className="text-[8px] text-white/40 uppercase font-bold mt-0.5">Przegranych</p>
-                      </div>
-                      {isMyLeaderboardEntry(viewingPlayer.odwiedza) && (<div className="bg-green-500/10 border border-green-500/30 rounded-xl p-3 text-center"><p className="text-green-400 text-xs font-bold">✨ To Twój profil!</p></div>)}
+                    );
+                  })()}
+
+                  <div className={`bg-gradient-to-r ${currentTheme.gradient} to-transparent border ${currentTheme.border}/30 rounded-2xl p-4 flex items-center gap-4`}>
+                    <div className={`w-11 h-11 rounded-full ${currentTheme.primary} flex items-center justify-center text-white font-black shrink-0`}>{(nickname || '?').charAt(0).toUpperCase()}</div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white font-bold text-sm truncate">{nickname}</p>
+                      <p className="text-white/40 text-[10px]">{myShownPoints(leaderboardTab) > 0 ? (myPeriodRank ? `Twoje miejsce: #${myPeriodRank}` : 'Liczenie miejsca...') : 'Zagraj, aby wejść do rankingu!'}</p>
                     </div>
-                  ) : (
-                    <>
-                      <h2 className="text-3xl font-black text-white mb-4 text-center uppercase">🏆 RANKING GRACZY</h2>
-                      <div className="flex justify-center gap-2 mb-4">{([10, 100, 500] as const).map(tab => (<button key={tab} onClick={() => { setLeaderboardTab(tab); fetchLeaderboard(tab); }} className={`px-4 py-2 rounded-xl font-bold text-sm transition-all ${leaderboardTab === tab ? `${currentTheme.primary} text-white` : 'bg-white/10 text-white/50 hover:bg-white/20'}`}>TOP {tab}</button>))}</div>
-                      <div className="space-y-2 max-w-sm mx-auto max-h-[50vh] overflow-y-auto pr-2">
-                        {leaderboard.length === 0 ? <div className="text-center py-8 text-white/20 italic font-bold">Ładowanie...</div> : leaderboard.map(entry => (
-                          <button key={entry.rank} onClick={() => setViewingPlayer({ nickname: entry.username, points: entry.score, wins: entry.wins, total_games: entry.total_games, rank: entry.rank, odwiedza: entry.odwiedza })}
-                            className={`w-full flex items-center justify-between p-3 rounded-2xl border transition-all ${isMyLeaderboardEntry(entry.odwiedza) ? `${currentTheme.primary} border-white shadow-xl` : 'bg-white/5 border-white/5 hover:bg-white/10'}`}>
-                            <div className="flex items-center gap-3">
-                              <span className={`text-xs font-black w-8 ${entry.rank <= 3 ? 'text-yellow-500' : 'text-white/40'}`}>{entry.rank === 1 ? '🥇' : entry.rank === 2 ? '🥈' : entry.rank === 3 ? '🥉' : `#${entry.rank}`}</span>
-                              <span className="font-bold text-white text-sm">{entry.username}</span>
-                              {isMyLeaderboardEntry(entry.odwiedza) && <span className="text-[8px] bg-white/20 text-white/60 px-1.5 py-0.5 rounded-full font-bold">TY</span>}
-                            </div>
-                            <div className="text-right"><div className="text-lg font-black text-white leading-none">{entry.score.toLocaleString()}</div><div className="text-[8px] uppercase font-black text-white/30">pkt</div></div>
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  )}
+                    <div className="text-right shrink-0">
+                      <p className="text-2xl font-black text-white leading-none">{myShownPoints(leaderboardTab).toLocaleString()}</p>
+                      <p className="text-[8px] uppercase font-black text-white/30">pkt</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 max-h-[45vh] overflow-y-auto pr-1">
+                    {loadingBoard ? (
+                      <div className="text-center py-8 text-white/20 italic font-bold">Ładowanie...</div>
+                    ) : topPlayers.length === 0 ? (
+                      <div className="text-center py-8 bg-white/[0.02] rounded-2xl border border-white/5"><span className="text-4xl mb-2 block">🌱</span><p className="text-white/30 font-bold text-sm">Nikt jeszcze nie zagrał w tym okresie</p><p className="text-white/20 text-xs mt-1">Bądź pierwszy!</p></div>
+                    ) : topPlayers.map((p, i) => {
+                      const isMe = p.user_id === userId;
+                      return (
+                        <div key={p.user_id || i} className={`flex items-center justify-between p-3 rounded-2xl border transition-all ${isMe ? `${currentTheme.primary} border-white shadow-xl` : i === 0 ? 'bg-gradient-to-r from-yellow-500/15 to-orange-500/10 border-yellow-500/30' : 'bg-white/5 border-white/5'}`}>
+                          <div className="flex items-center gap-3 min-w-0">
+                            <span className={`text-xs font-black w-8 shrink-0 ${i <= 2 ? 'text-yellow-500' : 'text-white/40'}`}>{i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`}</span>
+                            <span className="font-bold text-white text-sm truncate">{p.nickname}</span>
+                            {isMe && <span className="text-[8px] bg-white/20 text-white/70 px-1.5 py-0.5 rounded-full font-bold shrink-0">TY</span>}
+                          </div>
+                          <div className="text-right shrink-0 pl-2">
+                            <div className="text-lg font-black text-white leading-none">{p.points.toLocaleString()}</div>
+                            <div className="text-[8px] uppercase font-black text-white/30">{p.games} gier</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="text-white/20 text-[9px] text-center">Punkty z bieżącego okresu • aktualizacja po zakończonej grze</p>
                 </div>
               )}
               {activeModal === 'contact' && (<div className="text-center"><h2 className="text-3xl font-black text-white mb-6">KONTAKT</h2><div className="bg-white/5 p-8 rounded-3xl border border-white/10 text-center"><p className="text-white/40 text-sm mb-4 uppercase font-bold tracking-widest">Masz pytanie lub sugestię?</p><a href="mailto:jogisek@interia.pl" className={`text-2xl font-black ${currentTheme.text} hover:scale-105 transition-transform block mb-4`}>jogisek@interia.pl</a></div></div>)}
               {activeModal === 'tos' && (<div className="space-y-4"><h2 className="text-3xl font-black text-white mb-6">REGULAMIN</h2><p className="text-white/40 text-xs mb-4">Ostatnia aktualizacja: 5.06.2026</p><div className="space-y-4 text-white/70 text-sm leading-relaxed">
 <div className="bg-white/5 p-4 rounded-xl"><h3 className="font-bold text-white mb-2">§1. Postanowienia ogólne</h3><p>1.1. Serwis &quot;Co Jest Grane?&quot; jest darmową grą muzyczną online dostępną pod adresem co-jest-grane.pl, stworzoną w celach rozrywkowych i edukacyjnych.</p><p className="mt-2">1.2. Właścicielem i administratorem Serwisu jest Jogis (kontakt: jogisek@interia.pl).</p><p className="mt-2">1.3. Korzystanie z Serwisu jest bezpłatne i nie wymaga rejestracji.</p></div>
-<div className="bg-white/5 p-4 rounded-xl"><h3 className="font-bold text-white mb-2">§2. Zasady korzystania</h3><p>2.1. Użytkownik zobowiązuje się do korzystania z Serwisu zgodnie z obowiązującym prawem i zasadami fair play.</p><p className="mt-2">2.2. Zabrania się: używania wulgarnych lub obraźliwych pseudonimów, prób manipulowania wynikami lub rankingiem, nadużywania systemów punktowych, używania automatycznych narzędzi (botów).</p><p className="mt-2">2.3. Administrator zastrzega sobie prawo do usunięcia konta lub zresetowania wyników w przypadku naruszenia regulaminu.</p></div>
+<div className="bg-white/5 p-4 rounded-xl"><h3 className="font-bold text-white mb-2">§2. Zasady korzystania</h3><p>2.1. Użytkownik zobowiązuje się do korzystania z Serwisu zgodnie z obowiązującym prawem i zasadami fair play.</p><p className="mt-2">2.2. Zabrania się: używania wulgarnych lub obraźliwych pseudonimów, prób manipulowania wynikami, nadużywania systemów punktowych, używania automatycznych narzędzi (botów).</p><p className="mt-2">2.3. Administrator zastrzega sobie prawo do usunięcia konta lub zresetowania wyników w przypadku naruszenia regulaminu.</p></div>
 <div className="bg-white/5 p-4 rounded-xl"><h3 className="font-bold text-white mb-2">§3. Konta i dane</h3><p>3.1. Logowanie możliwe jest przez konto Google lub adres e-mail (Firebase Authentication).</p><p className="mt-2">3.2. Postępy niezalogowanych użytkowników zapisywane są lokalnie w przeglądarce (localStorage).</p><p className="mt-2">3.3. Użytkownik może w dowolnym momencie usunąć swoje dane kontaktując się z administratorem.</p></div>
 <div className="bg-white/5 p-4 rounded-xl"><h3 className="font-bold text-white mb-2">§4. Własność intelektualna</h3><p>4.1. Fragmenty muzyczne wykorzystywane w grze służą wyłącznie celom edukacyjnym i rozrywkowym w ramach dozwolonego użytku.</p><p className="mt-2">4.2. Wszystkie prawa do utworów muzycznych należą do ich właścicieli.</p></div>
 <div className="bg-white/5 p-4 rounded-xl"><h3 className="font-bold text-white mb-2">§5. Odpowiedzialność</h3><p>5.1. Serwis udostępniany jest w stanie &quot;as is&quot;. Administrator nie gwarantuje ciągłej dostępności.</p><p className="mt-2">5.2. Administrator zastrzega prawo do modyfikacji, zawieszenia lub zakończenia działania Serwisu.</p></div>
@@ -1286,7 +1348,7 @@ const GameAppInner: React.FC = () => {
               {activeModal === 'privacy' && (<div className="space-y-4"><h2 className="text-3xl font-black text-white mb-6">POLITYKA PRYWATNOŚCI</h2><p className="text-white/40 text-xs mb-4">Ostatnia aktualizacja: 5.06.2026</p><div className="space-y-4 text-white/70 text-sm leading-relaxed">
 <div className="bg-white/5 p-4 rounded-xl"><h3 className="font-bold text-white mb-2">1. Administrator danych</h3><p>Administratorem danych osobowych jest Jogis. Kontakt: jogisek@interia.pl</p></div>
 <div className="bg-white/5 p-4 rounded-xl"><h3 className="font-bold text-white mb-2">2. Jakie dane zbieramy?</h3><ul className="list-disc list-inside mt-2 space-y-1"><li>Pseudonim (nick) wybrany przez użytkownika</li><li>Postępy w grze (wyniki, statystyki, osiągnięcia)</li><li>Adres e-mail (tylko przy rejestracji konta)</li><li>Identyfikator sesji (anonimowy UUID)</li></ul><p className="mt-2">Nie zbieramy danych wrażliwych ani nie profilujemy użytkowników w celach marketingowych.</p></div>
-<div className="bg-white/5 p-4 rounded-xl"><h3 className="font-bold text-white mb-2">3. Cel przetwarzania</h3><ul className="list-disc list-inside mt-2 space-y-1"><li>Zapewnienie funkcjonalności gry (zapis postępów, ranking)</li><li>Synchronizacja postępów między urządzeniami</li><li>Wyświetlanie pseudonimu w rankingu</li></ul></div>
+<div className="bg-white/5 p-4 rounded-xl"><h3 className="font-bold text-white mb-2">3. Cel przetwarzania</h3><ul className="list-disc list-inside mt-2 space-y-1"><li>Zapewnienie funkcjonalności gry (zapis postępów, statystyki globalne)</li><li>Synchronizacja postępów między urządzeniami</li></ul></div>
 <div className="bg-white/5 p-4 rounded-xl"><h3 className="font-bold text-white mb-2">4. Przechowywanie danych</h3><ul className="list-disc list-inside mt-2 space-y-1"><li><strong>Supabase</strong> (baza danych) — serwery w UE</li><li><strong>Firebase Authentication</strong> (Google) — uwierzytelnianie</li><li><strong>localStorage</strong> przeglądarki — dane lokalne</li></ul></div>
 <div className="bg-white/5 p-4 rounded-xl"><h3 className="font-bold text-white mb-2">5. Cookies i analityka</h3><p>Serwis wykorzystuje Google Analytics do zbierania anonimowych statystyk odwiedzin.</p></div>
 <div className="bg-white/5 p-4 rounded-xl"><h3 className="font-bold text-white mb-2">6. Prawa użytkownika</h3><ul className="list-disc list-inside mt-2 space-y-1"><li>Dostęp do swoich danych</li><li>Sprostowanie nieprawidłowych danych</li><li>Usunięcie danych (&quot;prawo do bycia zapomnianym&quot;)</li><li>Przeniesienie danych</li></ul><p className="mt-2">Kontakt: jogisek@interia.pl</p></div>
@@ -1347,11 +1409,12 @@ const GameAppInner: React.FC = () => {
             )}</AnimatePresence>
           </div>
         )}
+        {/* Lekki ranking tygodnia — TOP 3 podgląd (dane pobrane raz przy starcie) */}
         {topPlayers.length > 0 && view === 'menu' && (
           <div className="bg-black/40 backdrop-blur-md border border-white/10 rounded-2xl shadow-2xl overflow-hidden w-full">
-            <div className="px-3 py-2.5 flex items-center gap-2"><span className="text-sm">🏆</span><span className="text-white/50 text-[9px] font-bold uppercase tracking-widest flex-1">Top 3</span></div>
-            <div className="px-2 pb-2 space-y-1">{topPlayers.map((p, i) => (<div key={i} className="flex items-center gap-2 bg-white/5 rounded-lg px-2.5 py-1.5"><span className="text-xs shrink-0">{i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉'}</span><span className="text-white/60 text-[10px] font-bold flex-1 truncate">{p.nickname}</span><span className="text-white/30 text-[9px] font-mono">{p.points.toLocaleString()}</span></div>))}</div>
-            <button onClick={() => { setLeaderboardTab(10); fetchLeaderboard(10); setViewingPlayer(null); setActiveModal('leaderboard'); }} className={`w-full py-2 text-[9px] font-bold uppercase tracking-widest ${currentTheme.text} hover:bg-white/5 transition-all border-t border-white/5`}>Zobacz ranking →</button>
+            <div className="px-3 py-2.5 flex items-center gap-2"><span className="text-sm">🏆</span><span className="text-white/50 text-[9px] font-bold uppercase tracking-widest flex-1">Top tygodnia</span></div>
+            <div className="px-2 pb-2 space-y-1">{topPlayers.slice(0, 3).map((p, i) => (<div key={p.user_id || i} className="flex items-center gap-2 bg-white/5 rounded-lg px-2.5 py-1.5"><span className="text-xs shrink-0">{i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉'}</span><span className="text-white/60 text-[10px] font-bold flex-1 truncate">{p.nickname}</span><span className="text-white/30 text-[9px] font-mono">{p.points.toLocaleString()}</span></div>))}</div>
+            <button onClick={() => openLeaderboard('week')} className={`w-full py-2 text-[9px] font-bold uppercase tracking-widest ${currentTheme.text} hover:bg-white/5 transition-all border-t border-white/5`}>Zobacz TOP 10 →</button>
           </div>
         )}
         {/* Moje projekty 4fun */}
@@ -1380,15 +1443,6 @@ const GameAppInner: React.FC = () => {
       <div className="fixed bottom-4 left-4 md:bottom-8 md:left-8 z-40 flex flex-col gap-2">
         <a href="https://buymeacoffee.com/jogis" target="_blank" rel="noopener noreferrer" className="bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 backdrop-blur-md border border-white/20 rounded-2xl px-4 py-3 transition-all flex items-center gap-2 text-white shadow-lg hover:scale-105" title="Może piwko?">
           <span className="text-lg">🍺</span><span className="text-[10px] font-bold uppercase tracking-widest hidden sm:inline">Może piwko?</span>
-        </a>
-        <button onClick={() => setActiveModal('feedback')} className="bg-white/5 hover:bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl px-4 py-3 transition-all flex items-center gap-2 text-white/50 hover:text-white shadow-lg"><span className="text-lg">📝</span><span className="text-[10px] font-bold uppercase tracking-widest hidden sm:inline">Zgłoszenia</span></button>
-      </div>
-
-      {/* Bottom left corner */}
-      <div className="fixed bottom-4 left-4 md:bottom-8 md:left-8 z-40 flex flex-col gap-2">
-        <a href="https://buymeacoffee.com/jogis" target="_blank" rel="noopener noreferrer" className="bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 backdrop-blur-md border border-white/20 rounded-2xl px-4 py-3 transition-all flex items-center gap-2 text-white shadow-lg hover:scale-105" title="Może piwko?">
-          <span className="text-lg">🍺</span>
-          <span className="text-[10px] font-bold uppercase tracking-widest hidden sm:inline">Może piwko?</span>
         </a>
         <button onClick={() => setActiveModal('feedback')} className="bg-white/5 hover:bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl px-4 py-3 transition-all flex items-center gap-2 text-white/50 hover:text-white shadow-lg"><span className="text-lg">📝</span><span className="text-[10px] font-bold uppercase tracking-widest hidden sm:inline">Zgłoszenia</span></button>
       </div>
@@ -1454,7 +1508,7 @@ const GameAppInner: React.FC = () => {
                       </div>
                       <div className="flex flex-col sm:flex-row gap-3 w-full max-w-2xl relative z-10">
                         <button onClick={() => setActiveModal('howtoplay')} className={`flex-1 ${currentTheme.primary} ${currentTheme.hover} text-white py-3.5 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2 shadow-lg`}><HelpCircle size={18} /> JAK GRAĆ?</button>
-                        <button onClick={() => { setLeaderboardTab(10); fetchLeaderboard(10); setViewingPlayer(null); setActiveModal('leaderboard'); }} className="flex-1 bg-white/10 border border-white/10 text-white py-3.5 rounded-2xl font-bold text-sm hover:bg-white/20 transition-all flex items-center justify-center gap-2">🏆 RANKING</button>
+                        <button onClick={() => openLeaderboard('week')} className="flex-1 bg-white/10 border border-white/10 text-white py-3.5 rounded-2xl font-bold text-sm hover:bg-white/20 transition-all flex items-center justify-center gap-2">🏆 TOP 10</button>
                       </div>
                       {/* Multiplayer */}
                       <button onClick={() => setShowMultiplayer(true)} className="w-full max-w-2xl relative z-10 group">

@@ -2,7 +2,7 @@
 
 import dynamic from 'next/dynamic';
 
-const GameApp = dynamic(() => import('@/components/GameApp'), { 
+const GameApp = dynamic(() => import('@/components/GameApp'), {
   ssr: false,
   loading: () => (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center">
