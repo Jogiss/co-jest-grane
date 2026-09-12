@@ -402,10 +402,28 @@ const GameAppInner: React.FC = () => {
     const fetchSongs = async () => {
       setIsLoading(true);
       try {
-        const { data, error } = await supabase.from('Piosenki').select('*');
-        if (error) setErrorMessage(`Błąd Supabase: ${error.message}`);
-        else if (data) {
-          const mappedSongs = data.map((s: any, index: number) => {
+        // Supabase domyślnie zwraca maks. 1000 rekordów. Po przekroczeniu
+        // tego limitu nowe dni znikały z kalendarza. Pobieramy bezpiecznie
+        // stronami po 1000; dla 1007 piosenek to tylko dwa zapytania.
+        const allSongs: any[] = [];
+        const pageSize = 1000;
+        let from = 0;
+        let fetchError: { message: string } | null = null;
+        while (true) {
+          const { data: page, error } = await supabase
+            .from('Piosenki')
+            .select('title,artist,category,audio_url,preview_start,date,mode,gatunek,youtube_url')
+            .order('date', { ascending: true })
+            .range(from, from + pageSize - 1);
+          if (error) { fetchError = error; break; }
+          if (!page || page.length === 0) break;
+          allSongs.push(...page);
+          if (page.length < pageSize) break;
+          from += pageSize;
+        }
+        if (fetchError) setErrorMessage(`Błąd Supabase: ${fetchError.message}`);
+        else {
+          const mappedSongs = allSongs.map((s: any, index: number) => {
             const rawCat = (s.category || "").trim().toLowerCase();
             let normalizedCat: Category = 'Polskie';
             if (rawCat === 'zagraniczne' || rawCat === 'foreign') normalizedCat = 'Zagraniczne';
@@ -563,7 +581,14 @@ const GameAppInner: React.FC = () => {
   useEffect(() => {
     if (view === 'result') { stopMusic(); playResultAudio(); setTimeout(() => checkNewAchievements(), 1500); setNavCooldown(true); setTimeout(() => setNavCooldown(false), 1500); }
     if (view !== 'result' && view !== 'playing') { stopMusic(); audioEngine.stopAll(); stopResultPlayer(); resultBufferRef.current = null; setResultCurrentTime(0); setResultDuration(0); }
-    if (view === 'menu') { stopMusic(); stopResultPlayer(); destroyYtPlayer(); audioEngine.stopAll(); clearEventState(); }
+    // FIX: przy powrocie do OTWARTEGO okna eventów/społeczności nie czyścimy
+    // stanu eventu — clearEventState() unieważniało świeżo rozpoczęte
+    // pobieranie wyzwań (efekt biegł po startopenEventDetail i podbijał
+    // licznik żądań), więc lista zostawała pusta ("pojawią się wkrótce").
+    if (view === 'menu') {
+      stopMusic(); stopResultPlayer(); destroyYtPlayer(); audioEngine.stopAll();
+      if (!showEvents && !showCommunity) clearEventState();
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
 
