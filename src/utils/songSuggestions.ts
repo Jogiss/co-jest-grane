@@ -43,12 +43,25 @@ async function loadSongs(): Promise<void> {
       }
 
       // 2. Piosenki (daily/piano/beat/reverse) - EXCLUDE Bajki/Gry to avoid mixing with dedicated suggestions
+      // FIX: stronicowane pobieranie — Supabase zwraca maks. 1000 rekordów na
+      // zapytanie, więc bez tego najnowsze piosenki nie trafiały do podpowiedzi.
       try {
-        const { data } = await supabase.from('Piosenki').select('*');
-        if (data) addUnique(data.filter((p: any) => {
-          const cat = (p.category || '').toString().trim().toLowerCase();
-          return cat !== 'bajki' && cat !== 'bajka' && cat !== 'cartoons' && cat !== 'filmy' && cat !== 'movies' && cat !== 'gry' && cat !== 'gra' && cat !== 'games' && cat !== 'game';
-        }).map((p: any) => ({ title: p.title, artist: p.artist || '' })));
+        const pageSize = 1000;
+        let from = 0;
+        while (true) {
+          const { data } = await supabase
+            .from('Piosenki')
+            .select('title,artist,category')
+            .order('date', { ascending: true })
+            .range(from, from + pageSize - 1);
+          if (!data || data.length === 0) break;
+          addUnique(data.filter((p: any) => {
+            const cat = (p.category || '').toString().trim().toLowerCase();
+            return cat !== 'bajki' && cat !== 'bajka' && cat !== 'cartoons' && cat !== 'filmy' && cat !== 'movies' && cat !== 'gry' && cat !== 'gra' && cat !== 'games' && cat !== 'game';
+          }).map((p: any) => ({ title: p.title, artist: p.artist || '' })));
+          if (data.length < pageSize) break;
+          from += pageSize;
+        }
       } catch {}
 
       // 3. event_songs (twórcy events) - usually small
